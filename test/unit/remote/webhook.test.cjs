@@ -35,36 +35,36 @@ describe('SlackWebhook._isUserAllowed', () => {
 });
 
 describe('SlackWebhook._executeTmuxCommand', () => {
-  // _executeTmuxCommand uses spawnSync('tmux', ...) which may not be available.
+  // _executeTmuxCommand is async and uses spawnSync('tmux', ...) which may not be available.
   // We test the truncation logic and the -l flag usage indirectly.
 
-  it('truncates messages exceeding 4096 chars', () => {
+  it('truncates messages exceeding 4096 chars', async () => {
     const webhook = new SlackWebhook({ botToken: 'x', appToken: 'x' });
     const longMessage = 'x'.repeat(5000);
 
     // This will fail because tmux isn't running, but we verify it doesn't throw
     // with an overly long message. The function returns false on error.
-    const result = webhook._executeTmuxCommand(longMessage, { tmuxSession: 'nonexistent-test-session' });
+    const result = await webhook._executeTmuxCommand(longMessage, { tmuxSession: 'nonexistent-test-session' });
     assert.equal(result, false);
   });
 
-  it('returns false on error', () => {
+  it('returns false on error', async () => {
     const webhook = new SlackWebhook({ botToken: 'x', appToken: 'x' });
-    const result = webhook._executeTmuxCommand('test', { tmuxSession: 'nonexistent-test-session-xyz' });
+    const result = await webhook._executeTmuxCommand('test', { tmuxSession: 'nonexistent-test-session-xyz' });
     assert.equal(result, false);
   });
 
-  it('returns false when tmux session does not exist', () => {
+  it('returns false when tmux session does not exist', async () => {
     const webhook = new SlackWebhook({ botToken: 'x', appToken: 'x' });
-    const result = webhook._executeTmuxCommand('hello', { tmuxSession: 'nonexistent-session-xyz-test' });
+    const result = await webhook._executeTmuxCommand('hello', { tmuxSession: 'nonexistent-session-xyz-test' });
     assert.equal(result, false);
   });
 
-  it('defaults tmuxSession to "claude" when not specified', () => {
+  it('defaults tmuxSession to "claude" when not specified', async () => {
     const webhook = new SlackWebhook({ botToken: 'x', appToken: 'x' });
     // With no tmuxSession key, falls back to 'claude'.
     // Returns true if a "claude" tmux session exists, false otherwise — either is valid.
-    const result = webhook._executeTmuxCommand('test', {});
+    const result = await webhook._executeTmuxCommand('test', {});
     assert.equal(typeof result, 'boolean', 'should return a boolean');
   });
 });

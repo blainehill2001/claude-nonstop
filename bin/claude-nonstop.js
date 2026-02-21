@@ -30,12 +30,12 @@ import { createInterface } from 'readline';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, validateAccountName, CONFIG_DIR, DEFAULT_CLAUDE_DIR } from '../lib/config.js';
+import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, CONFIG_DIR, DEFAULT_CLAUDE_DIR } from '../lib/config.js';
 import { readCredentials, isTokenExpired, deleteKeychainEntry } from '../lib/keychain.js';
 import { checkAllUsage, checkUsage, fetchProfile } from '../lib/usage.js';
 import { pickBestAccount } from '../lib/scorer.js';
 import { run } from '../lib/runner.js';
-import { reauthAccount, reauthExpiredAccounts, silentRefresh } from '../lib/reauth.js';
+import { reauthAccount, silentRefresh } from '../lib/reauth.js';
 import { isMacOS } from '../lib/platform.js';
 import { installService, uninstallService, restartService, getServiceStatus, isServiceInstalled, LOG_PATH } from '../lib/service.js';
 
@@ -490,11 +490,8 @@ async function cmdRun(claudeArgs) {
       const sessionName = generateSessionName();
       console.error(`[claude-nonstop] Creating tmux session "${sessionName}"...`);
       reexecInTmux(sessionName, process.argv);
-      return; // reexecInTmux calls process.exit, but just in case
+      return;
     }
-
-    // NOTE: --dangerously-skip-permissions is NOT auto-injected.
-    // Approval prompts are preserved so you can approve/reject from Slack.
 
     // Append formatting instruction for Slack readability
     if (!claudeArgs.includes('--append-system-prompt')) {
@@ -506,97 +503,19 @@ async function cmdRun(claudeArgs) {
   }
 
   const accounts = getAccounts();
-
   if (accounts.length === 0) {
     console.error('No accounts registered. Run "claude-nonstop add <name>" first.');
     process.exit(1);
   }
 
-  // Read credentials for all accounts
-  let accountsWithCreds = accounts.map(a => {
-    const creds = readCredentials(a.configDir);
-    return { ...a, token: creds.token, expiresAt: creds.expiresAt };
-  });
-
-  // Pre-flight: detect expired tokens and offer re-auth
-  const expiredPreFlight = accountsWithCreds.filter(a =>
-    !a.token || (a.expiresAt && isTokenExpired({ expiresAt: a.expiresAt }))
-  );
-
-  if (expiredPreFlight.length > 0 && !remoteAccess) {
-    const refreshed = await reauthExpiredAccounts(expiredPreFlight);
-    if (refreshed.length > 0) {
-      // Re-read credentials for refreshed accounts
-      accountsWithCreds = accounts.map(a => {
-        const creds = readCredentials(a.configDir);
-        return { ...a, token: creds.token, expiresAt: creds.expiresAt };
-      });
-    }
-  }
-
-  const authenticated = accountsWithCreds.filter(a => a.token);
-
+  const { getAuthenticatedAccounts, selectAccount } = await import('../lib/launch.js');
+  const authenticated = await getAuthenticatedAccounts(accounts, { remoteAccess });
   if (authenticated.length === 0) {
     console.error('No authenticated accounts. Run "claude-nonstop add <name>" to add and authenticate an account.');
     process.exit(1);
   }
 
-  // Check usage and pick best account
-  let selectedAccount;
-
-  if (requestedAccount) {
-    // Explicit --account flag — use it directly, skip usage check
-    selectedAccount = authenticated.find(a => a.name === requestedAccount);
-    if (!selectedAccount) {
-      console.error(`Error: Account "${requestedAccount}" not found or not authenticated.`);
-      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
-      process.exit(1);
-    }
-    console.error(`[claude-nonstop] Using requested account "${selectedAccount.name}"`);
-  } else if (authenticated.length === 1) {
-    // Only one account — use it directly (skip usage check)
-    selectedAccount = authenticated[0];
-    console.error(`[claude-nonstop] Using account "${selectedAccount.name}"`);
-  } else {
-    // Multiple accounts — check usage and pick best
-    console.error('[claude-nonstop] Checking usage across accounts...');
-    const withUsage = await checkAllUsage(authenticated);
-
-    // Check if any authenticated accounts have API auth errors (expired or revoked)
-    const apiExpired = withUsage.filter(a =>
-      a.usage?.error === 'HTTP 401' || a.usage?.error === 'HTTP 403'
-    );
-    if (apiExpired.length > 0 && !remoteAccess) {
-      const refreshed = await reauthExpiredAccounts(apiExpired);
-      if (refreshed.length > 0) {
-        // Re-read credentials and re-check usage for refreshed accounts
-        const updatedAccounts = accounts.map(a => {
-          const creds = readCredentials(a.configDir);
-          return { ...a, token: creds.token };
-        }).filter(a => a.token);
-        const updatedUsage = await checkAllUsage(updatedAccounts);
-        // Merge: replace stale entries with refreshed ones
-        for (const updated of updatedUsage) {
-          const idx = withUsage.findIndex(a => a.name === updated.name);
-          if (idx !== -1) withUsage[idx] = updated;
-          else withUsage.push(updated);
-        }
-      }
-    }
-
-    const best = pickBestAccount(withUsage);
-
-    if (best) {
-      selectedAccount = best.account;
-      console.error(`[claude-nonstop] Selected "${selectedAccount.name}" (${best.reason})`);
-    } else {
-      // Fallback to first authenticated account
-      selectedAccount = authenticated[0];
-      console.error(`[claude-nonstop] Defaulting to "${selectedAccount.name}"`);
-    }
-  }
-
-  // Run with auto-switching
+  const selectedAccount = await selectAccount(authenticated, accounts, { requestedAccount, remoteAccess });
   await run(claudeArgs, selectedAccount, accounts, { remoteAccess });
 }
 
@@ -657,80 +576,14 @@ async function cmdResume(resumeArgs) {
   // Build claude args — approval prompts preserved for Slack interaction
   const claudeArgs = ['--resume', sessionId];
 
-  // Read credentials and pick best account (same as cmdRun)
-  let accountsWithCreds = accounts.map(a => {
-    const creds = readCredentials(a.configDir);
-    return { ...a, token: creds.token, expiresAt: creds.expiresAt };
-  });
-
-  const expiredPreFlight = accountsWithCreds.filter(a =>
-    !a.token || (a.expiresAt && isTokenExpired({ expiresAt: a.expiresAt }))
-  );
-
-  if (expiredPreFlight.length > 0 && !remoteAccess) {
-    const refreshed = await reauthExpiredAccounts(expiredPreFlight);
-    if (refreshed.length > 0) {
-      accountsWithCreds = accounts.map(a => {
-        const creds = readCredentials(a.configDir);
-        return { ...a, token: creds.token, expiresAt: creds.expiresAt };
-      });
-    }
-  }
-
-  const authenticated = accountsWithCreds.filter(a => a.token);
+  const { getAuthenticatedAccounts, selectAccount } = await import('../lib/launch.js');
+  const authenticated = await getAuthenticatedAccounts(accounts, { remoteAccess });
   if (authenticated.length === 0) {
     console.error('No authenticated accounts. Run "claude-nonstop add <name>" to add and authenticate an account.');
     process.exit(1);
   }
 
-  // Pick best account
-  let selectedAccount;
-
-  if (requestedAccount) {
-    // Explicit --account flag — use it directly, skip usage check
-    selectedAccount = authenticated.find(a => a.name === requestedAccount);
-    if (!selectedAccount) {
-      console.error(`Error: Account "${requestedAccount}" not found or not authenticated.`);
-      console.error(`Authenticated accounts: ${authenticated.map(a => a.name).join(', ')}`);
-      process.exit(1);
-    }
-    console.error(`[claude-nonstop] Using requested account "${selectedAccount.name}"`);
-  } else if (authenticated.length === 1) {
-    selectedAccount = authenticated[0];
-    console.error(`[claude-nonstop] Using account "${selectedAccount.name}"`);
-  } else {
-    console.error('[claude-nonstop] Checking usage across accounts...');
-    const withUsage = await checkAllUsage(authenticated);
-
-    const apiExpired = withUsage.filter(a =>
-      a.usage?.error === 'HTTP 401' || a.usage?.error === 'HTTP 403'
-    );
-    if (apiExpired.length > 0 && !remoteAccess) {
-      const refreshed = await reauthExpiredAccounts(apiExpired);
-      if (refreshed.length > 0) {
-        const updatedAccounts = accounts.map(a => {
-          const creds = readCredentials(a.configDir);
-          return { ...a, token: creds.token };
-        }).filter(a => a.token);
-        const updatedUsage = await checkAllUsage(updatedAccounts);
-        for (const updated of updatedUsage) {
-          const idx = withUsage.findIndex(a => a.name === updated.name);
-          if (idx !== -1) withUsage[idx] = updated;
-          else withUsage.push(updated);
-        }
-      }
-    }
-
-    const best = pickBestAccount(withUsage);
-
-    if (best) {
-      selectedAccount = best.account;
-      console.error(`[claude-nonstop] Selected "${selectedAccount.name}" (${best.reason})`);
-    } else {
-      selectedAccount = authenticated[0];
-      console.error(`[claude-nonstop] Defaulting to "${selectedAccount.name}"`);
-    }
-  }
+  let selectedAccount = await selectAccount(authenticated, accounts, { requestedAccount, remoteAccess });
 
   // Migrate session to selected account if it lives in a different profile
   if (found.account.configDir !== selectedAccount.configDir) {

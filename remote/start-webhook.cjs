@@ -77,16 +77,22 @@ async function main() {
         allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').map(s => s.trim()).filter(Boolean),
     });
 
-    process.on('SIGINT', async () => {
-        console.log('\nShutting down...');
-        await webhook.stop();
-        process.exit(0);
-    });
+    const SHUTDOWN_TIMEOUT_MS = 5000;
 
-    process.on('SIGTERM', async () => {
-        await webhook.stop();
-        process.exit(0);
-    });
+    function gracefulShutdown(label) {
+        if (label) console.log(label);
+        const forceExit = setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS);
+        forceExit.unref();
+        webhook.stop()
+            .catch(err => console.error('Error during shutdown:', err.message))
+            .finally(() => {
+                clearTimeout(forceExit);
+                process.exit(0);
+            });
+    }
+
+    process.on('SIGINT', () => gracefulShutdown('\nShutting down...'));
+    process.on('SIGTERM', () => gracefulShutdown());
 
     await webhook.start();
 }

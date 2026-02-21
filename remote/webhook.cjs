@@ -111,7 +111,7 @@ class SlackWebhook {
                     const cmdText = text.slice(5);
                     if (!cmdText) return;
                     if (sessionInfo.tmuxSession) {
-                        const relayOk = this._executeTmuxCommand(cmdText, { tmuxSession: sessionInfo.tmuxSession });
+                        const relayOk = await this._executeTmuxCommand(cmdText, { tmuxSession: sessionInfo.tmuxSession });
                         if (!relayOk) {
                             await say(':warning: Failed to relay message \u2014 tmux session may have ended');
                         }
@@ -123,7 +123,7 @@ class SlackWebhook {
 
                 if (sessionInfo.tmuxSession) {
                     await channelManager.setTypingIndicator(message.channel, message.ts);
-                    const relayOk = this._executeTmuxCommand(text, { tmuxSession: sessionInfo.tmuxSession });
+                    const relayOk = await this._executeTmuxCommand(text, { tmuxSession: sessionInfo.tmuxSession });
                     if (!relayOk) {
                         await say(':warning: Failed to relay message \u2014 tmux session may have ended');
                     }
@@ -145,7 +145,7 @@ class SlackWebhook {
                 }
 
                 await say(`:rocket: Sending to tmux session \`${defaultTmuxSession}\`...\n\`${text}\``);
-                this._executeTmuxCommand(text, { tmuxSession: defaultTmuxSession });
+                await this._executeTmuxCommand(text, { tmuxSession: defaultTmuxSession });
                 return;
             }
           } catch (err) {
@@ -168,7 +168,7 @@ class SlackWebhook {
                 }
 
                 await say(`:rocket: Sending to tmux session \`${defaultTmuxSession}\`...\n\`${text}\``);
-                this._executeTmuxCommand(text, { tmuxSession: defaultTmuxSession });
+                await this._executeTmuxCommand(text, { tmuxSession: defaultTmuxSession });
             }
           } catch (err) {
             console.error('App mention handler error:', err.message);
@@ -181,9 +181,9 @@ class SlackWebhook {
 
     /**
      * Send a command to a tmux session.
-     * @returns {boolean} true if the text was sent successfully
+     * @returns {Promise<boolean>} true if the text and Enter were sent successfully
      */
-    _executeTmuxCommand(command, session) {
+    async _executeTmuxCommand(command, session) {
         const tmuxSession = session.tmuxSession || 'claude';
         const MAX_TMUX_MESSAGE_LENGTH = 4096;
 
@@ -203,13 +203,15 @@ class SlackWebhook {
                 return false;
             }
 
-            // Step 2: Send Enter key separately (300ms delay for Claude Code to process)
-            setTimeout(() => {
-                const enterResult = spawnSync('tmux', [...baseArgs, 'Enter']);
-                if (enterResult.error) {
-                    console.error('tmux send-keys Enter error:', enterResult.error.message);
-                }
-            }, 300);
+            // Step 2: Send Enter key after delay (Claude Code needs time to process text)
+            await new Promise(resolve => setTimeout(resolve, 300));
+
+            const enterResult = spawnSync('tmux', [...baseArgs, 'Enter']);
+            if (enterResult.error || enterResult.status !== 0) {
+                console.error('tmux send-keys Enter error:', enterResult.error?.message || `exit ${enterResult.status}`);
+                return false;
+            }
+
             return true;
         } catch (error) {
             console.error('tmux command error:', error.message);
