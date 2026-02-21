@@ -267,7 +267,7 @@ Use `--no-remote-access` to skip tmux/Slack and run in local terminal only.
 
 **Security note:** `--dangerously-skip-permissions` allows Claude to run any tool (file edits, shell commands) without confirmation prompts. This is required for unattended operation but means Claude has full access to your system. Use `SLACK_ALLOWED_USERS` in your `.env` to restrict who can send commands via Slack.
 
-A Slack channel like `#cn-myproject-abc12345` is created (the suffix is the Claude session ID). Reply in the channel to send messages to Claude.
+A Slack channel like `#myproject-feb20-1430` is created. Reply in the channel to send messages to Claude.
 
 **If something goes wrong:**
 - Slack channel not created? Check hooks: `claude-nonstop hooks status` (all should show "installed")
@@ -281,7 +281,7 @@ claude-nonstop setup   # also installs webhook as launchd service on macOS
 claude-nonstop
   → detects no tmux → creates tmux session "myproject"
   → picks best account, spawns claude with CLAUDE_REMOTE_ACCESS=true
-  → Claude's SessionStart hook fires → creates Slack channel #cn-myproject-abc12345
+  → Claude's SessionStart hook fires → creates Slack channel #myproject-feb20-1430
   → Claude completes work → Stop hook posts response to the channel
   → You reply in Slack → webhook relays message to tmux → Claude receives it
 ```

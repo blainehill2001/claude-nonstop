@@ -158,7 +158,7 @@ To avoid ambiguity, use these qualified terms in code comments and docs:
 
 - **Claude session** — A Claude Code conversation (the `.jsonl` file and associated `tool-results/` directory)
 - **tmux session** — The tmux terminal session (created by default, skipped with `--no-remote-access`)
-- **Slack channel** — The per-session Slack channel (e.g., `#cn-myproject-feb20-2021`, auto-renames to `#cn-myproject-fix-auth-bug`)
+- **Slack channel** — The per-session Slack channel (e.g., `#myproject-feb20-2021`, auto-renames to `#myproject-fix-auth-bug`)
 - **account** — A registered Claude subscription in `config.json` (not "profile," though accounts are stored under `profiles/`)
 
 ## Data Storage
@@ -383,7 +383,7 @@ This should (remote access is on by default):
 - Create a tmux session
 - Select the best account
 - Fire the SessionStart hook
-- Create a Slack channel (e.g., `#cn-projectname-feb20-2021`)
+- Create a Slack channel (e.g., `#projectname-feb20-2021`)
 - Claude's responses appear in the channel
 - Messages in the channel are relayed to Claude
 

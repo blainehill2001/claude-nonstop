@@ -17,7 +17,7 @@
  * Environment:
  *   CLAUDE_REMOTE_ACCESS=true  — enables per-session Slack channels
  *   SLACK_BOT_TOKEN            — Slack bot token (xoxb-...)
- *   SLACK_CHANNEL_PREFIX       — channel name prefix (default: 'cn')
+ *   SLACK_CHANNEL_PREFIX       — channel name prefix (default: empty)
  *   SLACK_INVITE_USER_ID       — user to auto-invite to channels
  */
 
