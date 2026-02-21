@@ -1059,7 +1059,7 @@ describe('SlackChannelManager.clearProgressMessage', () => {
     removeTempDir(tempDir);
   });
 
-  it('removes progressMessageTs from channel map entry', () => {
+  it('removes progressMessageTs from channel map entry', async () => {
     const data = {
       'sess-1': {
         channelId: 'C001', active: true,
@@ -1069,7 +1069,7 @@ describe('SlackChannelManager.clearProgressMessage', () => {
     };
     fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
 
-    manager.clearProgressMessage('sess-1');
+    await manager.clearProgressMessage('sess-1');
 
     const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
     assert.equal(map['sess-1'].progressMessageTs, undefined);
@@ -1707,5 +1707,54 @@ describe('cleanupStaleChannels', () => {
 
     const updatedMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
     assert.ok(updatedMap['recent-inactive']);
+  });
+});
+
+describe('findSessionIdByTmux', () => {
+  const { findSessionIdByTmux } = require('../../../remote/channel-manager.cjs');
+  let tempDir;
+  let mapPath;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    mapPath = path.join(tempDir, 'channel-map.json');
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('returns session ID for active entry matching tmux session', () => {
+    const map = {
+      'sess-abc': { tmuxSession: 'my-project', active: true, createdAt: new Date().toISOString() },
+      'sess-xyz': { tmuxSession: 'other', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+    assert.equal(findSessionIdByTmux('my-project', mapPath), 'sess-abc');
+  });
+
+  it('returns null for inactive entry', () => {
+    const map = {
+      'sess-abc': { tmuxSession: 'my-project', active: false, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+    assert.equal(findSessionIdByTmux('my-project', mapPath), null);
+  });
+
+  it('returns null when no entries match', () => {
+    const map = {
+      'sess-abc': { tmuxSession: 'other', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+    assert.equal(findSessionIdByTmux('my-project', mapPath), null);
+  });
+
+  it('returns null when channel-map does not exist', () => {
+    assert.equal(findSessionIdByTmux('my-project', path.join(tempDir, 'nonexistent.json')), null);
+  });
+
+  it('returns null for null/undefined tmux name', () => {
+    assert.equal(findSessionIdByTmux(null), null);
+    assert.equal(findSessionIdByTmux(undefined), null);
   });
 });

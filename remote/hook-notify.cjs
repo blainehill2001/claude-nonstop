@@ -395,6 +395,24 @@ function flushOutputBuffer(bufPath, sigPath) {
     }
 }
 
+/**
+ * Flush-and-post: reads the output buffer, posts to Slack, and finalizes.
+ * Used by tool-use and waiting-for-input handlers to preserve chronological order.
+ */
+async function flushAndPostOutput(sessionId) {
+    const bufPath = outputBufferPath(sessionId);
+    const sigPath = outputSignalPath(sessionId);
+    const buffered = flushOutputBuffer(bufPath, sigPath);
+    if (buffered) {
+        const manager = createChannelManager();
+        const formatted = formatOutputMessage(buffered);
+        if (formatted) {
+            await manager.postOutputMessage(sessionId, formatted);
+            manager.finalizeOutputMessage(sessionId);
+        }
+    }
+}
+
 // ─── User Response Formatter ─────────────────────────────────────────────────
 
 /**
@@ -631,19 +649,7 @@ async function main() {
         if (!toolName || !WAITING_FOR_INPUT_TOOLS.has(toolName)) return;
 
         // Flush output buffer before posting waiting message (chronological ordering)
-        {
-            const bufPath = outputBufferPath(sessionId);
-            const sigPath = outputSignalPath(sessionId);
-            const buffered = flushOutputBuffer(bufPath, sigPath);
-            if (buffered) {
-                const flushManager = createChannelManager();
-                const formatted = formatOutputMessage(buffered);
-                if (formatted) {
-                    await flushManager.postOutputMessage(sessionId, formatted);
-                    flushManager.finalizeOutputMessage(sessionId);
-                }
-            }
-        }
+        await flushAndPostOutput(sessionId);
 
         const manager = createChannelManager();
         await manager.clearProgressMessage(sessionId);
@@ -730,19 +736,7 @@ async function main() {
         if (!toolName) return;
 
         // Flush output buffer before posting tool message (chronological ordering)
-        {
-            const bufPath = outputBufferPath(sessionId);
-            const sigPath = outputSignalPath(sessionId);
-            const buffered = flushOutputBuffer(bufPath, sigPath);
-            if (buffered) {
-                const flushManager = createChannelManager();
-                const formatted = formatOutputMessage(buffered);
-                if (formatted) {
-                    await flushManager.postOutputMessage(sessionId, formatted);
-                    flushManager.finalizeOutputMessage(sessionId);
-                }
-            }
-        }
+        await flushAndPostOutput(sessionId);
 
         // Intercept user-response tools: post the user's answer to Slack
         if (USER_RESPONSE_TOOLS.has(toolName)) {
@@ -940,7 +934,7 @@ module.exports = {
     // Output message formatting
     formatOutputMessage,
     // Output buffer flush
-    flushOutputBuffer,
+    flushOutputBuffer, flushAndPostOutput,
     // Slug generation helpers
     generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
     // Countdown worker

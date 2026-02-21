@@ -785,11 +785,37 @@ function drainMessageQueue(queuePath) {
     return queue;
 }
 
+/**
+ * Find the active session ID for a given tmux session name.
+ * Reads channel-map.json and returns the first active entry matching the tmux session.
+ * @param {string} tmuxSessionName
+ * @param {string} [mapPath] - Override channel map path (for testing)
+ */
+function findSessionIdByTmux(tmuxSessionName, mapPath) {
+    if (!tmuxSessionName) return null;
+    const filePath = mapPath || CHANNEL_MAP_PATH;
+    try {
+        if (!fs.existsSync(filePath)) return null;
+        const raw = fs.readFileSync(filePath, 'utf8');
+        if (!raw.trim()) return null;
+        const map = JSON.parse(raw);
+        for (const [sessionId, entry] of Object.entries(map)) {
+            if (entry.tmuxSession === tmuxSessionName && entry.active) {
+                return sessionId;
+            }
+        }
+    } catch {
+        // Ignore read/parse errors
+    }
+    return null;
+}
+
 module.exports = SlackChannelManager;
 module.exports.markdownToMrkdwn = markdownToMrkdwn;
 module.exports.readMessageQueue = readMessageQueue;
 module.exports.writeMessageQueue = writeMessageQueue;
 module.exports.enqueueMessage = enqueueMessage;
 module.exports.drainMessageQueue = drainMessageQueue;
+module.exports.findSessionIdByTmux = findSessionIdByTmux;
 module.exports.MAX_QUEUE_SIZE = MAX_QUEUE_SIZE;
 module.exports.PRUNE_AGE_MS = PRUNE_AGE_MS;
