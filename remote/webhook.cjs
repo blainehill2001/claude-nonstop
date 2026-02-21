@@ -51,10 +51,10 @@ class SlackWebhook {
         this.app.message(async ({ message, say }) => {
           try {
             if (message.subtype || message.bot_id) return;
-            console.log('Received message:', message.text);
 
             const text = message.text?.trim() || '';
             if (!text) return;
+            console.log('Received message:', text);
 
             // Per-session channel handling
             const channelManager = this._getChannelManager();

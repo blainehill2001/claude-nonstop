@@ -124,6 +124,15 @@ class SlackChannelManager {
         if (entry && entry.active) {
             return entry;
         }
+        // If this session was deactivated (channel reused by a newer session),
+        // find the active entry that inherited the same channel
+        if (entry && !entry.active && entry.channelId) {
+            for (const [, other] of Object.entries(map)) {
+                if (other.channelId === entry.channelId && other.active) {
+                    return other;
+                }
+            }
+        }
         return null;
     }
 

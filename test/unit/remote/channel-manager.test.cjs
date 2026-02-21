@@ -264,11 +264,34 @@ describe('SlackChannelManager.getChannelMapping', () => {
     assert.equal(result.channelId, 'C001');
   });
 
-  it('returns null for inactive mapping', () => {
+  it('returns null for inactive mapping with no active successor', () => {
     const data = { 'sess-1': { channelId: 'C001', active: false } };
     fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
 
     assert.equal(manager.getChannelMapping('sess-1'), null);
+  });
+
+  it('follows inactive session to active successor sharing same channelId', () => {
+    const data = {
+      'old-sess': { channelId: 'C001', channelName: 'cn-proj-old', active: false },
+      'new-sess': { channelId: 'C001', channelName: 'cn-proj-new', active: true },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = manager.getChannelMapping('old-sess');
+    assert.ok(result, 'Should return the active successor');
+    assert.equal(result.channelName, 'cn-proj-new');
+    assert.equal(result.active, true);
+  });
+
+  it('does not follow inactive session if no active entry shares channelId', () => {
+    const data = {
+      'old-sess': { channelId: 'C001', active: false },
+      'other-sess': { channelId: 'C002', active: true },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    assert.equal(manager.getChannelMapping('old-sess'), null);
   });
 
   it('returns null for missing session', () => {
