@@ -30,7 +30,7 @@ require('./load-env.cjs');
 
 const SlackChannelManager = require('./channel-manager.cjs');
 const { markdownToMrkdwn } = SlackChannelManager;
-const { PROGRESS_DIR, expandPath } = require('./paths.cjs');
+const { PROGRESS_DIR, expandPath, outputBufferPath, outputSignalPath } = require('./paths.cjs');
 
 // ─── Progress Buffer Constants ──────────────────────────────────────────────
 
@@ -363,6 +363,38 @@ function formatOutputMessage(text) {
     return text.trim();
 }
 
+/**
+ * Read and clear the output buffer file, incrementing the signal counter.
+ * Returns the buffer content, or null if empty/missing.
+ *
+ * @param {string} [bufPath] - Override buffer path (for testing)
+ * @param {string} [sigPath] - Override signal path (for testing)
+ * @returns {string|null}
+ */
+function flushOutputBuffer(bufPath, sigPath) {
+    try {
+        if (!fs.existsSync(bufPath)) return null;
+        const content = fs.readFileSync(bufPath, 'utf8');
+        if (!content || !content.trim()) return null;
+
+        // Clear the buffer
+        fs.writeFileSync(bufPath, '', { mode: 0o600 });
+
+        // Increment signal counter
+        let counter = 0;
+        try {
+            if (fs.existsSync(sigPath)) {
+                counter = parseInt(fs.readFileSync(sigPath, 'utf8').trim(), 10) || 0;
+            }
+        } catch {}
+        fs.writeFileSync(sigPath, String(counter + 1), { mode: 0o600 });
+
+        return content;
+    } catch {
+        return null;
+    }
+}
+
 // ─── User Response Formatter ─────────────────────────────────────────────────
 
 /**
@@ -598,6 +630,21 @@ async function main() {
         const toolInput = hookContext?.tool_input;
         if (!toolName || !WAITING_FOR_INPUT_TOOLS.has(toolName)) return;
 
+        // Flush output buffer before posting waiting message (chronological ordering)
+        {
+            const bufPath = outputBufferPath(sessionId);
+            const sigPath = outputSignalPath(sessionId);
+            const buffered = flushOutputBuffer(bufPath, sigPath);
+            if (buffered) {
+                const flushManager = createChannelManager();
+                const formatted = formatOutputMessage(buffered);
+                if (formatted) {
+                    await flushManager.postOutputMessage(sessionId, formatted);
+                    flushManager.finalizeOutputMessage(sessionId);
+                }
+            }
+        }
+
         const manager = createChannelManager();
         await manager.clearProgressMessage(sessionId);
 
@@ -681,6 +728,21 @@ async function main() {
         const toolName = hookContext?.tool_name;
         const toolInput = hookContext?.tool_input;
         if (!toolName) return;
+
+        // Flush output buffer before posting tool message (chronological ordering)
+        {
+            const bufPath = outputBufferPath(sessionId);
+            const sigPath = outputSignalPath(sessionId);
+            const buffered = flushOutputBuffer(bufPath, sigPath);
+            if (buffered) {
+                const flushManager = createChannelManager();
+                const formatted = formatOutputMessage(buffered);
+                if (formatted) {
+                    await flushManager.postOutputMessage(sessionId, formatted);
+                    flushManager.finalizeOutputMessage(sessionId);
+                }
+            }
+        }
 
         // Intercept user-response tools: post the user's answer to Slack
         if (USER_RESPONSE_TOOLS.has(toolName)) {
@@ -877,6 +939,8 @@ module.exports = {
     formatUserResponse,
     // Output message formatting
     formatOutputMessage,
+    // Output buffer flush
+    flushOutputBuffer,
     // Slug generation helpers
     generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
     // Countdown worker

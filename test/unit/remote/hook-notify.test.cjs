@@ -12,6 +12,7 @@ const {
   formatUserResponse,
   generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
   buildApprovalButtons,
+  flushOutputBuffer,
 } = require('../../../remote/hook-notify.cjs');
 
 const FIXTURES_DIR = path.join(__dirname, '..', '..', 'fixtures', 'transcripts');
@@ -1330,6 +1331,72 @@ describe('formatOutputMessage', () => {
         const { formatOutputMessage } = require('../../../remote/hook-notify.cjs');
         const result = formatOutputMessage('line 1\nline 2\nline 3');
         assert.equal(result, 'line 1\nline 2\nline 3');
+    });
+});
+
+describe('flushOutputBuffer', () => {
+    let tmpDir;
+
+    beforeEach(() => {
+        tmpDir = createTempDir('cn-flush-test-');
+    });
+    afterEach(() => {
+        removeTempDir(tmpDir);
+    });
+
+    it('reads buffer file, returns content, and clears file', () => {
+        const bufPath = path.join(tmpDir, 'output-buffer-test.txt');
+        const sigPath = path.join(tmpDir, 'output-signal-test.counter');
+
+        fs.writeFileSync(bufPath, 'buffered text here');
+        fs.writeFileSync(sigPath, '3');
+
+        const result = flushOutputBuffer(bufPath, sigPath);
+        assert.equal(result, 'buffered text here');
+
+        // Buffer should be cleared
+        assert.equal(fs.readFileSync(bufPath, 'utf8'), '');
+
+        // Signal counter should be incremented
+        assert.equal(fs.readFileSync(sigPath, 'utf8'), '4');
+    });
+
+    it('returns null when buffer file does not exist', () => {
+        const bufPath = path.join(tmpDir, 'nonexistent.txt');
+        const sigPath = path.join(tmpDir, 'nonexistent.counter');
+        assert.equal(flushOutputBuffer(bufPath, sigPath), null);
+    });
+
+    it('returns null when buffer is empty', () => {
+        const bufPath = path.join(tmpDir, 'empty-buffer.txt');
+        const sigPath = path.join(tmpDir, 'empty-signal.counter');
+        fs.writeFileSync(bufPath, '');
+        assert.equal(flushOutputBuffer(bufPath, sigPath), null);
+    });
+
+    it('returns null when buffer is whitespace only', () => {
+        const bufPath = path.join(tmpDir, 'ws-buffer.txt');
+        const sigPath = path.join(tmpDir, 'ws-signal.counter');
+        fs.writeFileSync(bufPath, '  \n  \n  ');
+        assert.equal(flushOutputBuffer(bufPath, sigPath), null);
+    });
+
+    it('creates signal file with counter 1 when it does not exist', () => {
+        const bufPath = path.join(tmpDir, 'new-buffer.txt');
+        const sigPath = path.join(tmpDir, 'new-signal.counter');
+        fs.writeFileSync(bufPath, 'content');
+        const result = flushOutputBuffer(bufPath, sigPath);
+        assert.equal(result, 'content');
+        assert.equal(fs.readFileSync(sigPath, 'utf8'), '1');
+    });
+
+    it('increments existing counter', () => {
+        const bufPath = path.join(tmpDir, 'buf.txt');
+        const sigPath = path.join(tmpDir, 'sig.counter');
+        fs.writeFileSync(sigPath, '10');
+        fs.writeFileSync(bufPath, 'text');
+        flushOutputBuffer(bufPath, sigPath);
+        assert.equal(fs.readFileSync(sigPath, 'utf8'), '11');
     });
 });
 
