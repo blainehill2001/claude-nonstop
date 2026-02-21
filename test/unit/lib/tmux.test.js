@@ -35,13 +35,14 @@ describe('isInsideTmux', () => {
 });
 
 describe('generateSessionName', () => {
-  it('produces basename-hash format', () => {
+  it('produces basename-hash format with optional counter suffix', () => {
     const name = generateSessionName();
-    assert.match(name, /^.+-[a-f0-9]{6}$/);
+    // Base format: <basename>-<6-char-hex>, with optional -<N> suffix
+    // when a tmux session with the base name already exists
+    assert.match(name, /^.+-[a-f0-9]{6}(-\d+)?$/);
   });
 
-  it('is deterministic when no tmux sessions exist', () => {
-    // When no sessions exist, both calls return the base name
+  it('is deterministic for same cwd', () => {
     const name1 = generateSessionName();
     const name2 = generateSessionName();
     assert.equal(name1, name2);
