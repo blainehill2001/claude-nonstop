@@ -1,7 +1,8 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('os');
-const { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH } = require('../../../remote/paths.cjs');
+const path = require('path');
+const { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, outputBufferPath, outputSignalPath } = require('../../../remote/paths.cjs');
 
 describe('paths.cjs exports', () => {
   it('CONFIG_DIR starts with homedir', () => {
@@ -33,5 +34,19 @@ describe('paths.cjs exports', () => {
 
   it('CHANNEL_MAP_PATH ends with channel-map.json', () => {
     assert.ok(CHANNEL_MAP_PATH.endsWith('channel-map.json'));
+  });
+});
+
+describe('outputBufferPath', () => {
+  it('returns path under DATA_DIR with session ID', () => {
+    const p = outputBufferPath('abc-123');
+    assert.equal(p, path.join(DATA_DIR, 'output-buffer-abc-123.txt'));
+  });
+});
+
+describe('outputSignalPath', () => {
+  it('returns path under DATA_DIR with session ID', () => {
+    const p = outputSignalPath('abc-123');
+    assert.equal(p, path.join(DATA_DIR, 'output-signal-abc-123.counter'));
   });
 });

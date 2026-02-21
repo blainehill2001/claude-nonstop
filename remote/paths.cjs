@@ -23,4 +23,12 @@ function expandPath(p) {
   return p.startsWith('~') ? p.replace(/^~/, os.homedir()) : p;
 }
 
-module.exports = { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, PROGRESS_DIR, LOG_DIR, LOG_PATH, MESSAGE_QUEUE_PATH, expandPath };
+function outputBufferPath(sessionId) {
+  return path.join(DATA_DIR, `output-buffer-${sessionId}.txt`);
+}
+
+function outputSignalPath(sessionId) {
+  return path.join(DATA_DIR, `output-signal-${sessionId}.counter`);
+}
+
+module.exports = { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, PROGRESS_DIR, LOG_DIR, LOG_PATH, MESSAGE_QUEUE_PATH, expandPath, outputBufferPath, outputSignalPath };
