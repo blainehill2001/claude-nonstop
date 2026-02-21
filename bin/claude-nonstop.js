@@ -493,10 +493,8 @@ async function cmdRun(claudeArgs) {
       return; // reexecInTmux calls process.exit, but just in case
     }
 
-    // Inside tmux — inject --dangerously-skip-permissions if not already present
-    if (!claudeArgs.includes('--dangerously-skip-permissions')) {
-      claudeArgs.push('--dangerously-skip-permissions');
-    }
+    // NOTE: --dangerously-skip-permissions is NOT auto-injected.
+    // Approval prompts are preserved so you can approve/reject from Slack.
 
     // Append formatting instruction for Slack readability
     if (!claudeArgs.includes('--append-system-prompt')) {
@@ -656,11 +654,8 @@ async function cmdResume(resumeArgs) {
   const sessionId = sessionIdArg || found.sessionId;
   console.error(`[claude-nonstop] Found session ${sessionId} in account "${found.account.name}"`);
 
-  // Build claude args
+  // Build claude args — approval prompts preserved for Slack interaction
   const claudeArgs = ['--resume', sessionId];
-  if (remoteAccess && !claudeArgs.includes('--dangerously-skip-permissions')) {
-    claudeArgs.push('--dangerously-skip-permissions');
-  }
 
   // Read credentials and pick best account (same as cmdRun)
   let accountsWithCreds = accounts.map(a => {
@@ -1418,7 +1413,7 @@ Options:
   --account <name>, -a <name>
                      Use a specific account (skip auto-selection)
   --remote-access    Auto-create tmux session + enable Slack per-session channels
-                     Implies --dangerously-skip-permissions
+                     Approval prompts preserved (respond via Slack)
 
 Options for setup:
   --bot-token <tok>  Slack bot token (xoxb-...)
@@ -1463,7 +1458,7 @@ Multi-account switching:
 Remote access (--remote-access):
   1. Creates a tmux session named after the current directory
   2. Sets CLAUDE_REMOTE_ACCESS=true — each session gets a Slack channel
-  3. Enables --dangerously-skip-permissions for unattended operation
+  3. Preserves approval prompts (approve/reject via Slack)
   4. Slack webhook relays messages from Slack channels to tmux
 
 Quick start:
