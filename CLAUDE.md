@@ -157,7 +157,7 @@ In per-session Slack channels, these commands are handled before tmux relay:
 To avoid ambiguity, use these qualified terms in code comments and docs:
 
 - **Claude session** — A Claude Code conversation (the `.jsonl` file and associated `tool-results/` directory)
-- **tmux session** — The tmux terminal session created by `--remote-access`
+- **tmux session** — The tmux terminal session (created by default, skipped with `--no-remote-access`)
 - **Slack channel** — The per-session Slack channel (e.g., `#cn-myproject-feb20-2021`, auto-renames to `#cn-myproject-fix-auth-bug`)
 - **account** — A registered Claude subscription in `config.json` (not "profile," though accounts are stored under `profiles/`)
 
@@ -213,9 +213,9 @@ If you are an AI agent helping a user set up claude-nonstop, follow these steps 
 
 Ask the user what they need before starting:
 
-- **Multi-account switching only** — Skip the Slack/webhook/remote-access steps entirely. The user only needs accounts added and can use `claude-nonstop`.
-- **Slack remote access only** — The user may only have one account. Still need Slack setup, hooks, webhook, and tmux.
-- **Both** — Full setup.
+- **Multi-account switching only** — Skip the Slack/webhook/remote-access steps entirely. The user only needs accounts added and can use `claude-nonstop --no-remote-access`.
+- **Slack remote access** (default) — The user may only have one account. Still need Slack setup, hooks, webhook, and tmux.
+- **Both** — Full setup (recommended).
 
 If the user just says "set up claude-nonstop" without details, ask which features they want.
 
@@ -376,10 +376,10 @@ Expected output: `Slack bot is running in Socket Mode`. If it exits immediately,
 ### Step 9: Verify end-to-end
 
 ```bash
-claude-nonstop --remote-access
+claude-nonstop
 ```
 
-This should:
+This should (remote access is on by default):
 - Create a tmux session
 - Select the best account
 - Fire the SessionStart hook

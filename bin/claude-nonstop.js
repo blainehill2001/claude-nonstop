@@ -612,11 +612,16 @@ async function cmdChannels(args = []) {
 }
 
 async function cmdRun(claudeArgs) {
-  // Extract --remote-access flag (consume it, don't pass to claude)
-  const remoteAccessIdx = claudeArgs.indexOf('--remote-access');
-  const remoteAccess = remoteAccessIdx !== -1;
-  if (remoteAccess) {
-    claudeArgs.splice(remoteAccessIdx, 1);
+  // Remote access is on by default; --no-remote-access disables it
+  const noRemoteIdx = claudeArgs.indexOf('--no-remote-access');
+  let remoteAccess = noRemoteIdx === -1;
+  if (noRemoteIdx !== -1) {
+    claudeArgs.splice(noRemoteIdx, 1);
+  }
+  // Also accept legacy --remote-access flag (no-op, already default)
+  const legacyIdx = claudeArgs.indexOf('--remote-access');
+  if (legacyIdx !== -1) {
+    claudeArgs.splice(legacyIdx, 1);
   }
 
   // Extract --account / -a flag (consume it, don't pass to claude)
@@ -660,11 +665,16 @@ async function cmdRun(claudeArgs) {
 }
 
 async function cmdResume(resumeArgs) {
-  // Extract --remote-access flag (consume it, don't pass to claude)
-  const remoteAccessIdx = resumeArgs.indexOf('--remote-access');
-  const remoteAccess = remoteAccessIdx !== -1;
-  if (remoteAccess) {
-    resumeArgs.splice(remoteAccessIdx, 1);
+  // Remote access is on by default; --no-remote-access disables it
+  const noRemoteIdx = resumeArgs.indexOf('--no-remote-access');
+  let remoteAccess = noRemoteIdx === -1;
+  if (noRemoteIdx !== -1) {
+    resumeArgs.splice(noRemoteIdx, 1);
+  }
+  // Also accept legacy --remote-access flag (no-op, already default)
+  const legacyIdx = resumeArgs.indexOf('--remote-access');
+  if (legacyIdx !== -1) {
+    resumeArgs.splice(legacyIdx, 1);
   }
 
   // Extract --account / -a flag (consume it, don't pass to claude)
@@ -876,11 +886,11 @@ GEMINI_API_KEY=${geminiKey || ''}
   console.log('\nSetup complete! Next steps:');
   if (isMacOS()) {
     console.log('  1. Check webhook status: claude-nonstop webhook status');
-    console.log('  2. Run with remote:      claude-nonstop --remote-access');
+    console.log('  2. Run:                  claude-nonstop');
   } else {
     console.log('  1. Start the webhook:    claude-nonstop webhook');
     console.log('     (or set up a systemd service for auto-restart)');
-    console.log('  2. Run with remote:      claude-nonstop --remote-access');
+    console.log('  2. Run:                  claude-nonstop');
   }
 }
 
@@ -1446,8 +1456,7 @@ Commands:
 Options:
   --account <name>, -a <name>
                      Use a specific account (skip auto-selection)
-  --remote-access    Auto-create tmux session + enable Slack per-session channels
-                     Approval prompts preserved (respond via Slack)
+  --no-remote-access Skip tmux session + Slack channels (local terminal only)
 
 Options for setup:
   --bot-token <tok>  Slack bot token (xoxb-...)
@@ -1466,14 +1475,14 @@ Options for uninstall:
   --force            Skip confirmation prompt
 
 Examples:
-  claude-nonstop                        # Run with best account
+  claude-nonstop                        # Run with best account (tmux + Slack)
   claude-nonstop -a work                # Run with specific account
   claude-nonstop -a work -p "fix bug"   # One-shot with specific account
+  claude-nonstop --no-remote-access     # Run without tmux/Slack (local terminal)
   claude-nonstop resume                 # Resume most recent session (any account)
   claude-nonstop resume abc123          # Resume specific session by ID
   claude-nonstop resume -a work         # Resume with specific account
   claude-nonstop -p "fix bug"           # One-shot prompt (args passed to Claude)
-  claude-nonstop --remote-access        # Full remote access (tmux + Slack)
   claude-nonstop add work               # Add a second account
   claude-nonstop status                 # Check usage across all accounts
   claude-nonstop setup                  # Configure Slack (interactive)
@@ -1483,22 +1492,19 @@ Examples:
   claude-nonstop webhook status         # Check if webhook is running
   claude-nonstop uninstall              # Full cleanup
 
-Multi-account switching:
-  1. Checks usage API for all accounts on launch (~200ms)
-  2. Picks the account with the lowest utilization
-  3. Monitors output in real-time for rate limit messages
-  4. On rate limit: kills idle process, migrates session, resumes
-     on the next best account — fully automatic
-Remote access (--remote-access):
+By default, claude-nonstop runs with remote access:
   1. Creates a tmux session named after the current directory
-  2. Sets CLAUDE_REMOTE_ACCESS=true — each session gets a Slack channel
+  2. Each session gets a dedicated Slack channel
   3. Preserves approval prompts (approve/reject via Slack)
   4. Slack webhook relays messages from Slack channels to tmux
+  5. Checks usage API, picks best account, auto-switches on rate limit
+
+Use --no-remote-access to skip tmux/Slack and run in local terminal only.
 
 Quick start:
   claude-nonstop add work        # Add account (opens browser for OAuth)
   claude-nonstop setup           # Configure Slack tokens (auto-installs webhook)
-  claude-nonstop --remote-access
+  claude-nonstop                 # Run with remote access (default)
 `.trim());
 }
 

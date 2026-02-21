@@ -86,7 +86,7 @@ node -e "
 2. Run `claude-nonstop setup` with your tokens
 3. Verify hooks: `claude-nonstop hooks status`
 4. Start webhook in foreground for debugging: `claude-nonstop webhook start`
-5. Run `claude-nonstop --remote-access` and check that a Slack channel is created
+5. Run `claude-nonstop` and check that a Slack channel is created
 
 ### Debugging
 

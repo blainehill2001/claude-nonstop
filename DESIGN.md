@@ -72,7 +72,7 @@ Short-lived processes spawned by Claude Code itself on lifecycle events (Session
 
 ## Data Flow: Remote Access (Slack)
 
-1. `run --remote-access` detects no tmux -> creates tmux session (named after cwd basename)
+1. `run` detects no tmux -> creates tmux session (named after cwd basename)
 2. Re-execs itself inside tmux with `CLAUDE_REMOTE_ACCESS=true`
 3. Claude Code starts, fires `SessionStart` hook -> `hook-notify.cjs session-start`
 4. Hook reads stdin for `session_id`, creates Slack channel via `conversations.create`

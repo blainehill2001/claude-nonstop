@@ -252,16 +252,18 @@ For debugging, you can run the webhook in the foreground:
 claude-nonstop webhook start   # Runs in foreground (Ctrl+C to stop)
 ```
 
-### 4. Run with remote access
+### 4. Run
 
 ```bash
-claude-nonstop --remote-access
+claude-nonstop
 ```
 
-This automatically:
+Remote access is on by default. This automatically:
 1. Creates a tmux session named after the current directory
 2. Sets `CLAUDE_REMOTE_ACCESS=true` so each session gets a dedicated Slack channel
 3. Enables `--dangerously-skip-permissions` for unattended operation
+
+Use `--no-remote-access` to skip tmux/Slack and run in local terminal only.
 
 **Security note:** `--dangerously-skip-permissions` allows Claude to run any tool (file edits, shell commands) without confirmation prompts. This is required for unattended operation but means Claude has full access to your system. Use `SLACK_ALLOWED_USERS` in your `.env` to restrict who can send commands via Slack.
 
@@ -276,7 +278,7 @@ A Slack channel like `#cn-myproject-abc12345` is created (the suffix is the Clau
 
 ```
 claude-nonstop setup   # also installs webhook as launchd service on macOS
-claude-nonstop --remote-access
+claude-nonstop
   → detects no tmux → creates tmux session "myproject"
   → picks best account, spawns claude with CLAUDE_REMOTE_ACCESS=true
   → Claude's SessionStart hook fires → creates Slack channel #cn-myproject-abc12345
@@ -288,8 +290,8 @@ claude-nonstop --remote-access
 
 | Command | Description |
 |---------|-------------|
-| `[args...]` | Run Claude with best account + auto-switching (default) |
-| `--remote-access` | Run with tmux + Slack per-session channels |
+| `[args...]` | Run Claude with best account + auto-switching + remote access (default) |
+| `--no-remote-access` | Skip tmux/Slack, run in local terminal only |
 | `resume [id]` | Resume a session from any account (finds + migrates to best account) |
 | `add <name>` | Register a new Claude account and launch login (detects duplicates) |
 | `remove <name>` | Remove a registered account |
