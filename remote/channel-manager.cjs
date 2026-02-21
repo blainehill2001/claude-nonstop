@@ -48,17 +48,23 @@ class SlackChannelManager {
      * Generate a Slack-safe channel name.
      * Slack requires: lowercase, numbers, hyphens, underscores. Max 80 chars.
      */
-    _generateChannelName(project, sessionId) {
-        const shortId = sessionId.substring(0, 8).toLowerCase();
+    _generateChannelName(project) {
+        const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+        const now = new Date();
+        const mon = MONTHS[now.getMonth()];
+        const day = String(now.getDate()).padStart(2, '0');
+        const hour = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const timestamp = `${mon}${day}-${hour}${min}`;
+
         const safeProject = project
             .toLowerCase()
             .replace(/[^a-z0-9_-]/g, '-')
             .replace(/-+/g, '-')
             .replace(/^-|-$/g, '');
-        const name = `${this.channelPrefix}-${safeProject}-${shortId}`;
+        const name = `${this.channelPrefix}-${safeProject}-${timestamp}`;
         return name.substring(0, 80);
     }
-
     _readChannelMap() {
         try {
             if (!fs.existsSync(this.channelMapPath)) {
@@ -187,7 +193,7 @@ class SlackChannelManager {
             return existing;
         }
 
-        const channelName = this._generateChannelName(project, sessionId);
+        const channelName = this._generateChannelName(project);
 
         let channelId;
         let finalName = channelName;

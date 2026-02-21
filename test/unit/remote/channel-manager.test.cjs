@@ -66,30 +66,39 @@ describe('SlackChannelManager._generateChannelName', () => {
     removeTempDir(tempDir);
   });
 
-  it('generates lowercase channel name', () => {
-    const name = manager._generateChannelName('MyProject', 'abcdef12-3456');
-    assert.match(name, /^cn-myproject-abcdef12$/);
+  it('generates name with timestamp suffix instead of UUID', () => {
+    const name = manager._generateChannelName('myproject');
+    assert.ok(!name.match(/[0-9a-f]{8}$/), 'should not end with UUID');
+    assert.ok(name.match(/^cn-myproject-[a-z]{3}\d{2}-\d{4}$/), `unexpected format: ${name}`);
   });
 
-  it('sanitizes special characters', () => {
-    const name = manager._generateChannelName('my project!@#', 'abcdef12-3456');
-    assert.match(name, /^cn-my-project-abcdef12$/);
+  it('uses 3-letter lowercase month abbreviation', () => {
+    const name = manager._generateChannelName('proj');
+    const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const monthPart = name.match(/-([a-z]{3})\d{2}-/);
+    assert.ok(monthPart, 'should contain month abbreviation');
+    assert.ok(months.includes(monthPart[1]), `${monthPart[1]} is not a valid month`);
+  });
+
+  it('sanitizes special characters in project name', () => {
+    const name = manager._generateChannelName('my project!@#');
+    assert.ok(name.startsWith('cn-my-project-'));
   });
 
   it('truncates to 80 chars', () => {
     const longProject = 'a'.repeat(100);
-    const name = manager._generateChannelName(longProject, 'abcdef12-3456');
+    const name = manager._generateChannelName(longProject);
     assert.ok(name.length <= 80);
   });
 
   it('removes leading/trailing hyphens from project', () => {
-    const name = manager._generateChannelName('-proj-', 'abcdef12-3456');
-    assert.match(name, /^cn-proj-abcdef12$/);
+    const name = manager._generateChannelName('-proj-');
+    assert.ok(name.startsWith('cn-proj-'));
   });
 
   it('collapses multiple hyphens', () => {
-    const name = manager._generateChannelName('a--b', 'abcdef12-3456');
-    assert.match(name, /^cn-a-b-abcdef12$/);
+    const name = manager._generateChannelName('a--b');
+    assert.ok(name.startsWith('cn-a-b-'));
   });
 });
 
