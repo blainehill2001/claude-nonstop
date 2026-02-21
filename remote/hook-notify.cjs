@@ -39,6 +39,9 @@ const MAX_BUFFER_EVENTS = 100;
 // Tools that pause Claude to wait for user input in the terminal
 const WAITING_FOR_INPUT_TOOLS = new Set(['ExitPlanMode', 'AskUserQuestion']);
 
+// Tools whose PostToolUse response represents a user's answer (not Claude activity)
+const USER_RESPONSE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
 // ─── Stdin Reader ────────────────────────────────────────────────────────────
 
 async function readStdin() {
@@ -304,6 +307,46 @@ function formatWaitingMessage(toolName, toolInput, transcriptContent) {
     return ':hourglass: Waiting for input \u2014 reply here or use `!status` to view.';
 }
 
+// ─── User Response Formatter ─────────────────────────────────────────────────
+
+/**
+ * Extract a human-readable string from a PostToolUse tool_response for
+ * AskUserQuestion or ExitPlanMode. Returns null if nothing useful found.
+ */
+function formatUserResponse(toolName, toolInput, toolResponse) {
+    if (!toolResponse) return null;
+
+    // tool_response may be a string or an object
+    const resp = typeof toolResponse === 'string' ? tryParseJSON(toolResponse) : toolResponse;
+
+    if (toolName === 'AskUserQuestion') {
+        // Structured answers: { answers: { "question text": "selected label" } }
+        if (resp && typeof resp === 'object' && resp.answers) {
+            const parts = Object.entries(resp.answers).map(([q, a]) => a);
+            if (parts.length > 0) return parts.join('\n');
+        }
+        // result string
+        if (resp && typeof resp === 'object' && resp.result) return resp.result;
+        // plain string fallback
+        if (typeof toolResponse === 'string' && toolResponse.trim()) return toolResponse.trim();
+        return null;
+    }
+
+    if (toolName === 'ExitPlanMode') {
+        // ExitPlanMode response is typically a simple approval/rejection string
+        // Check parsed object first (handles JSON-encoded responses)
+        if (resp && typeof resp === 'object' && resp.result) return resp.result;
+        if (typeof toolResponse === 'string' && toolResponse.trim()) return toolResponse.trim();
+        return null;
+    }
+
+    return null;
+}
+
+function tryParseJSON(str) {
+    try { return JSON.parse(str); } catch { return str; }
+}
+
 // ─── Slug Generation ────────────────────────────────────────────────────────
 
 /**
@@ -476,6 +519,26 @@ async function main() {
         const toolInput = hookContext?.tool_input;
         if (!toolName) return;
 
+        // Intercept user-response tools: post the user's answer to Slack
+        if (USER_RESPONSE_TOOLS.has(toolName)) {
+            const toolResponse = hookContext?.tool_response;
+            const responseText = formatUserResponse(toolName, toolInput, toolResponse);
+            if (responseText) {
+                const manager = createChannelManager();
+                await manager.clearProgressMessage(sessionId);
+
+                const MAX_DISPLAY = 3900;
+                let displayText = responseText;
+                if (displayText.length > MAX_DISPLAY) {
+                    displayText = displayText.substring(0, MAX_DISPLAY) + '...';
+                }
+
+                const text = `:bust_in_silhouette: *You:*\n>>> ${displayText}`;
+                await manager.postToSessionChannel(sessionId, text);
+            }
+            return;
+        }
+
         const detail = extractToolDetail(toolName, toolInput);
         const event = { type: toolName, detail: detail ? detail.substring(0, 120) : null, ts: Date.now() };
 
@@ -607,7 +670,9 @@ module.exports = {
     extractToolDetail, formatProgressMessage, formatWaitingMessage, findTranscriptPath,
     // Buffer helpers exported for testing
     readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
-    FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
+    FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS, USER_RESPONSE_TOOLS,
+    // User response formatting
+    formatUserResponse,
     // Slug generation helpers
     generateSlugName, isSlugGeneration, spawnSlug,
 };

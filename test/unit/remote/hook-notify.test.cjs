@@ -8,7 +8,8 @@ const {
   getLastAssistantMessage, parseCurrentTurn, isPerSessionMode, markdownToMrkdwn,
   extractToolDetail, formatProgressMessage, formatWaitingMessage, findTranscriptPath,
   readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
-  FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
+  FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS, USER_RESPONSE_TOOLS,
+  formatUserResponse,
   generateSlugName, isSlugGeneration, spawnSlug,
 } = require('../../../remote/hook-notify.cjs');
 
@@ -991,5 +992,126 @@ describe('spawnSlug', () => {
   it('is exported from hook-notify', () => {
     const mod = require('../../../remote/hook-notify.cjs');
     assert.equal(typeof mod.spawnSlug, 'function');
+  });
+});
+
+describe('USER_RESPONSE_TOOLS', () => {
+  it('includes AskUserQuestion', () => {
+    assert.ok(USER_RESPONSE_TOOLS.has('AskUserQuestion'));
+  });
+
+  it('includes ExitPlanMode', () => {
+    assert.ok(USER_RESPONSE_TOOLS.has('ExitPlanMode'));
+  });
+
+  it('does not include regular tools', () => {
+    assert.ok(!USER_RESPONSE_TOOLS.has('Read'));
+    assert.ok(!USER_RESPONSE_TOOLS.has('Bash'));
+    assert.ok(!USER_RESPONSE_TOOLS.has('Edit'));
+  });
+});
+
+describe('formatUserResponse', () => {
+  // ── AskUserQuestion ──
+
+  it('extracts answer from structured answers object', () => {
+    const resp = { answers: { 'Which database?': 'PostgreSQL' } };
+    const result = formatUserResponse('AskUserQuestion', {}, resp);
+    assert.equal(result, 'PostgreSQL');
+  });
+
+  it('joins multiple answers with newlines', () => {
+    const resp = { answers: { 'Database?': 'PostgreSQL', 'Cache?': 'Redis' } };
+    const result = formatUserResponse('AskUserQuestion', {}, resp);
+    assert.equal(result, 'PostgreSQL\nRedis');
+  });
+
+  it('extracts answer from JSON string with answers field', () => {
+    const resp = JSON.stringify({ answers: { 'Color?': 'Blue' } });
+    const result = formatUserResponse('AskUserQuestion', {}, resp);
+    assert.equal(result, 'Blue');
+  });
+
+  it('extracts result string from object', () => {
+    const resp = { result: 'User chose option A' };
+    const result = formatUserResponse('AskUserQuestion', {}, resp);
+    assert.equal(result, 'User chose option A');
+  });
+
+  it('returns plain string response as-is', () => {
+    const result = formatUserResponse('AskUserQuestion', {}, 'Option B');
+    assert.equal(result, 'Option B');
+  });
+
+  it('returns null for empty string response', () => {
+    const result = formatUserResponse('AskUserQuestion', {}, '');
+    assert.equal(result, null);
+  });
+
+  it('returns null for whitespace-only string response', () => {
+    const result = formatUserResponse('AskUserQuestion', {}, '   ');
+    assert.equal(result, null);
+  });
+
+  it('returns null for null response', () => {
+    const result = formatUserResponse('AskUserQuestion', null, null);
+    assert.equal(result, null);
+  });
+
+  it('returns null for undefined response', () => {
+    const result = formatUserResponse('AskUserQuestion', null, undefined);
+    assert.equal(result, null);
+  });
+
+  it('returns null for empty answers object', () => {
+    const resp = { answers: {} };
+    const result = formatUserResponse('AskUserQuestion', {}, resp);
+    assert.equal(result, null);
+  });
+
+  // ── ExitPlanMode ──
+
+  it('returns string response for ExitPlanMode', () => {
+    const result = formatUserResponse('ExitPlanMode', {}, 'yes');
+    assert.equal(result, 'yes');
+  });
+
+  it('trims ExitPlanMode string response', () => {
+    const result = formatUserResponse('ExitPlanMode', {}, '  approved  ');
+    assert.equal(result, 'approved');
+  });
+
+  it('extracts result from ExitPlanMode object response', () => {
+    const resp = { result: 'Plan approved' };
+    const result = formatUserResponse('ExitPlanMode', {}, resp);
+    assert.equal(result, 'Plan approved');
+  });
+
+  it('extracts result from ExitPlanMode JSON string', () => {
+    const resp = JSON.stringify({ result: 'Looks good' });
+    const result = formatUserResponse('ExitPlanMode', {}, resp);
+    assert.equal(result, 'Looks good');
+  });
+
+  it('returns null for empty ExitPlanMode response', () => {
+    const result = formatUserResponse('ExitPlanMode', {}, '');
+    assert.equal(result, null);
+  });
+
+  it('returns null for null ExitPlanMode response', () => {
+    const result = formatUserResponse('ExitPlanMode', null, null);
+    assert.equal(result, null);
+  });
+
+  // ── Unknown tools ──
+
+  it('returns null for unknown tool names', () => {
+    const result = formatUserResponse('Read', {}, 'some response');
+    assert.equal(result, null);
+  });
+
+  it('returns null for unknown tool with object response', () => {
+    const result = formatUserResponse('Bash', {}, { output: 'hello' });
+    assert.equal(result, null);
   });
 });
