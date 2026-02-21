@@ -49,66 +49,71 @@ const command = args[0];
 // Auto-detect default account once at startup
 ensureDefaultAccount();
 
-switch (command) {
-  case 'add':
-    await cmdAdd(args.slice(1));
-    break;
+try {
+  switch (command) {
+    case 'add':
+      await cmdAdd(args.slice(1));
+      break;
 
-  case 'remove':
-    await cmdRemove(args.slice(1));
-    break;
+    case 'remove':
+      await cmdRemove(args.slice(1));
+      break;
 
-  case 'list':
-    await cmdList();
-    break;
+    case 'list':
+      await cmdList();
+      break;
 
-  case 'status':
-    await cmdStatus();
-    break;
+    case 'status':
+      await cmdStatus();
+      break;
 
-  case 'setup':
-    await cmdSetup(args.slice(1));
-    break;
+    case 'setup':
+      await cmdSetup(args.slice(1));
+      break;
 
-  case 'webhook':
-    await cmdWebhook(args.slice(1));
-    break;
+    case 'webhook':
+      await cmdWebhook(args.slice(1));
+      break;
 
-  case 'hooks':
-    await cmdHooks(args.slice(1));
-    break;
+    case 'hooks':
+      await cmdHooks(args.slice(1));
+      break;
 
-  case 'uninstall':
-    await cmdUninstall(args.slice(1));
-    break;
+    case 'uninstall':
+      await cmdUninstall(args.slice(1));
+      break;
 
-  case 'reauth':
-    await cmdReauth();
-    break;
+    case 'reauth':
+      await cmdReauth();
+      break;
 
-  case 'update':
-    await cmdUpdate();
-    break;
+    case 'update':
+      await cmdUpdate();
+      break;
 
-  case 'resume':
-    await cmdResume(args.slice(1));
-    break;
+    case 'resume':
+      await cmdResume(args.slice(1));
+      break;
 
-  case 'help':
-  case '--help':
-  case '-h':
-    printHelp();
-    break;
+    case 'help':
+    case '--help':
+    case '-h':
+      printHelp();
+      break;
 
-  case undefined:
-    // No command given — default to running Claude
-    await cmdRun([]);
-    break;
+    case undefined:
+      // No command given — default to running Claude
+      await cmdRun([]);
+      break;
 
-  default:
-    // Unknown command — treat as args to run (e.g. `claude-nonstop -p "fix bug"`)
-    await cmdRun(args);
-    break;
+    default:
+      // Unknown command — treat as args to run (e.g. `claude-nonstop -p "fix bug"`)
+      await cmdRun(args);
+      break;
+  }
+} catch (err) {
+  console.error(`[claude-nonstop] Fatal error: ${err.message}`);
+  process.exit(1);
 }
 
 // ─── Commands ──────────────────────────────────────────────────────────────────
@@ -1133,7 +1138,7 @@ function removeHooksFromAllProfiles() {
       if (!settings.hooks) continue;
 
       let modified = false;
-      for (const hookType of ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse']) {
+      for (const hookType of ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit']) {
         if (!settings.hooks[hookType]) continue;
 
         const filtered = settings.hooks[hookType].filter(m => {

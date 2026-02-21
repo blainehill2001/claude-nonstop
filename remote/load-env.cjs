@@ -24,7 +24,12 @@ if (fs.existsSync(envPath)) {
         const eqIdx = trimmed.indexOf('=');
         if (eqIdx === -1) continue;
         const key = trimmed.substring(0, eqIdx).trim();
-        const value = trimmed.substring(eqIdx + 1).trim();
+        let value = trimmed.substring(eqIdx + 1).trim();
+        // Strip surrounding quotes (single or double)
+        if ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+        }
         if (!process.env[key]) {
             process.env[key] = value;
         }

@@ -1,4 +1,4 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 
 const SlackWebhook = require('../../../remote/webhook.cjs');
@@ -35,8 +35,8 @@ describe('SlackWebhook._isUserAllowed', () => {
 });
 
 describe('SlackWebhook._executeTmuxCommand', () => {
-  // _executeTmuxCommand is async and uses spawnSync('tmux', ...) which may not be available.
-  // We test the truncation logic and the -l flag usage indirectly.
+  // _executeTmuxCommand uses async execFile('tmux', ...) which may not be available.
+  // We test error handling when tmux is not running.
 
   it('truncates messages exceeding 4096 chars', async () => {
     const webhook = new SlackWebhook({ botToken: 'x', appToken: 'x' });

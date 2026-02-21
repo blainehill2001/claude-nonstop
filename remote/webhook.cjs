@@ -5,9 +5,9 @@
  */
 
 const { App } = require('@slack/bolt');
-const path = require('path');
-const fs = require('fs');
-const { spawnSync } = require('child_process');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const SlackChannelManager = require('./channel-manager.cjs');
 
 class SlackWebhook {
@@ -50,8 +50,8 @@ class SlackWebhook {
         // Handle messages in session channels and DMs
         this.app.message(async ({ message, say }) => {
           try {
-            console.log('Received message:', message.text);
             if (message.subtype || message.bot_id) return;
+            console.log('Received message:', message.text);
 
             const text = message.text?.trim() || '';
             if (!text) return;
@@ -73,8 +73,12 @@ class SlackWebhook {
 
                 if (text === '!stop') {
                     if (sessionInfo.tmuxSession) {
-                        spawnSync('tmux', ['send-keys', '-t', sessionInfo.tmuxSession, 'C-c']);
-                        await say(':stop_sign: Sent interrupt to Claude');
+                        try {
+                            await execFileAsync('tmux', ['send-keys', '-t', sessionInfo.tmuxSession, 'C-c'], { timeout: 5000 });
+                            await say(':stop_sign: Sent interrupt to Claude');
+                        } catch {
+                            await say(':warning: Failed to send interrupt — tmux session may have ended');
+                        }
                     } else {
                         await say('No tmux session associated with this channel.');
                     }
@@ -83,18 +87,18 @@ class SlackWebhook {
 
                 if (text === '!status') {
                     if (sessionInfo.tmuxSession) {
-                        const result = spawnSync('tmux', ['capture-pane', '-p', '-t', sessionInfo.tmuxSession], {
-                            encoding: 'utf8',
-                            timeout: 5000,
-                        });
-                        if (result.error || result.status !== 0) {
-                            await say(':warning: Failed to capture terminal — tmux session may have ended');
-                        } else {
-                            let paneContent = (result.stdout || '').trimEnd();
+                        try {
+                            const { stdout } = await execFileAsync('tmux', ['capture-pane', '-p', '-t', sessionInfo.tmuxSession], {
+                                encoding: 'utf8',
+                                timeout: 5000,
+                            });
+                            let paneContent = (stdout || '').trimEnd();
                             if (paneContent.length > 3900) {
                                 paneContent = paneContent.substring(paneContent.length - 3900);
                             }
                             await say('```\n' + paneContent + '\n```');
+                        } catch {
+                            await say(':warning: Failed to capture terminal — tmux session may have ended');
                         }
                     } else {
                         await say('No tmux session associated with this channel.');
@@ -197,20 +201,12 @@ class SlackWebhook {
             const baseArgs = ['send-keys', '-t', tmuxSession];
 
             // Step 1: Send command text (literal mode)
-            const textResult = spawnSync('tmux', [...baseArgs, '-l', safeCommand]);
-            if (textResult.error || textResult.status !== 0) {
-                console.error('tmux send-keys text error:', textResult.error?.message || `exit ${textResult.status}`);
-                return false;
-            }
+            await execFileAsync('tmux', [...baseArgs, '-l', safeCommand], { timeout: 5000 });
 
             // Step 2: Send Enter key after delay (Claude Code needs time to process text)
             await new Promise(resolve => setTimeout(resolve, 300));
 
-            const enterResult = spawnSync('tmux', [...baseArgs, 'Enter']);
-            if (enterResult.error || enterResult.status !== 0) {
-                console.error('tmux send-keys Enter error:', enterResult.error?.message || `exit ${enterResult.status}`);
-                return false;
-            }
+            await execFileAsync('tmux', [...baseArgs, 'Enter'], { timeout: 5000 });
 
             return true;
         } catch (error) {

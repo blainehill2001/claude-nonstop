@@ -338,7 +338,7 @@ async function main() {
     if (notificationType === 'user-prompt') {
         if (!isPerSessionMode() || !sessionId) return;
 
-        const userPrompt = hookContext?.user_prompt;
+        const userPrompt = hookContext?.prompt;
         if (!userPrompt || !userPrompt.trim()) return;
 
         const manager = createChannelManager();

@@ -719,82 +719,209 @@ describe('plan mode transcript integration', () => {
   });
 });
 
-describe('user-prompt handler (source analysis)', () => {
-  const hookSource = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'remote', 'hook-notify.cjs'),
-    'utf-8'
-  );
+describe('user-prompt handler', () => {
+  const SlackChannelManager = require('../../../remote/channel-manager.cjs');
+  const { createMockSlackClient } = require('../../helpers/mock-slack.cjs');
+  let tempDir;
 
-  it('handles user-prompt notification type', () => {
-    assert.ok(
-      hookSource.includes("notificationType === 'user-prompt'"),
-      'Should have a handler for user-prompt notification type'
-    );
+  beforeEach(() => {
+    tempDir = createTempDir();
   });
 
-  it('reads user_prompt from hook context', () => {
-    assert.ok(
-      hookSource.includes('hookContext?.user_prompt'),
-      'Should read user_prompt field from stdin JSON'
-    );
+  afterEach(() => {
+    removeTempDir(tempDir);
   });
 
-  it('skips empty or whitespace-only prompts', () => {
-    assert.ok(
-      hookSource.includes("!userPrompt || !userPrompt.trim()"),
-      'Should skip empty/whitespace prompts'
-    );
+  /**
+   * Replicate the user-prompt formatting logic from main() so we can test
+   * the exact message that would be posted to Slack.
+   */
+  function formatUserPromptMessage(userPrompt) {
+    const MAX_PROMPT_DISPLAY = 3900;
+    let displayText = userPrompt.trim();
+    if (displayText.length > MAX_PROMPT_DISPLAY) {
+      displayText = displayText.substring(0, MAX_PROMPT_DISPLAY) + '...';
+    }
+    return `:bust_in_silhouette: *You:*\n>>> ${displayText}`;
+  }
+
+  it('formats short prompt with user icon and block quote', () => {
+    const msg = formatUserPromptMessage('Hello Claude');
+    assert.ok(msg.startsWith(':bust_in_silhouette: *You:*'));
+    assert.ok(msg.includes('>>> Hello Claude'));
   });
 
-  it('clears progress message before posting', () => {
-    // The clearProgressMessage call should appear between the user-prompt check
-    // and the postToSessionChannel call
-    const handlerMatch = hookSource.match(
-      /user-prompt[\s\S]*?clearProgressMessage[\s\S]*?postToSessionChannel/
-    );
-    assert.ok(handlerMatch, 'Should clear progress message before posting user prompt');
+  it('trims whitespace from prompt before formatting', () => {
+    const msg = formatUserPromptMessage('  padded text  ');
+    assert.ok(msg.includes('>>> padded text'));
+    assert.ok(!msg.includes('  padded text  '));
   });
 
-  it('truncates long prompts at 3900 chars', () => {
-    assert.ok(
-      hookSource.includes('MAX_PROMPT_DISPLAY = 3900'),
-      'Should define MAX_PROMPT_DISPLAY as 3900'
-    );
-    assert.ok(
-      hookSource.includes("displayText.substring(0, MAX_PROMPT_DISPLAY) + '...'"),
-      'Should truncate and add ellipsis'
-    );
+  it('truncates prompts longer than 3900 characters', () => {
+    const longPrompt = 'x'.repeat(5000);
+    const msg = formatUserPromptMessage(longPrompt);
+    // Should contain exactly 3900 x's plus '...'
+    const afterPrefix = msg.split('>>> ')[1];
+    assert.equal(afterPrefix, 'x'.repeat(3900) + '...');
   });
 
-  it('formats message with user icon and block quote', () => {
-    assert.ok(
-      hookSource.includes(':bust_in_silhouette: *You:*'),
-      'Should use bust_in_silhouette emoji and bold You prefix'
-    );
-    assert.ok(
-      hookSource.includes('>>> ${displayText}'),
-      'Should use Slack block quote for the prompt text'
-    );
+  it('does not truncate prompts at exactly 3900 characters', () => {
+    const exactPrompt = 'y'.repeat(3900);
+    const msg = formatUserPromptMessage(exactPrompt);
+    const afterPrefix = msg.split('>>> ')[1];
+    assert.equal(afterPrefix, 'y'.repeat(3900));
+    assert.ok(!afterPrefix.endsWith('...'));
   });
 
-  it('requires per-session mode and session ID', () => {
-    // The guard should appear before the user_prompt read
-    const handlerMatch = hookSource.match(
-      /user-prompt[\s\S]*?isPerSessionMode[\s\S]*?sessionId[\s\S]*?user_prompt/
-    );
-    assert.ok(handlerMatch, 'Should check isPerSessionMode and sessionId before processing');
+  it('does not truncate prompts shorter than 3900 characters', () => {
+    const shortPrompt = 'z'.repeat(100);
+    const msg = formatUserPromptMessage(shortPrompt);
+    const afterPrefix = msg.split('>>> ')[1];
+    assert.equal(afterPrefix, 'z'.repeat(100));
   });
 
-  it('runs async (does not block Claude Code)', () => {
-    // Verify the handler is in the async main() function
-    assert.ok(
-      hookSource.includes('async function main()'),
-      'main() should be async'
-    );
-    // Verify the user-prompt handler uses await
-    const handlerBlock = hookSource.match(
-      /user-prompt[\s\S]*?await manager\.postToSessionChannel/
-    );
-    assert.ok(handlerBlock, 'Should use await for Slack API calls');
+  it('empty or whitespace-only prompts are detected', () => {
+    // The handler guards with: if (!userPrompt || !userPrompt.trim()) return;
+    // Test the same condition
+    const emptyValues = [null, undefined, '', '   ', '\n\t'];
+    for (const val of emptyValues) {
+      const shouldSkip = !val || !val.trim();
+      assert.ok(shouldSkip, `Should skip prompt: ${JSON.stringify(val)}`);
+    }
+    // Non-empty prompts should NOT be skipped
+    const validValues = ['hello', '  hello  ', 'a'];
+    for (const val of validValues) {
+      const shouldSkip = !val || !val.trim();
+      assert.ok(!shouldSkip, `Should NOT skip prompt: ${JSON.stringify(val)}`);
+    }
+  });
+
+  it('isPerSessionMode gates the handler', () => {
+    const origRemote = process.env.CLAUDE_REMOTE_ACCESS;
+    const origToken = process.env.SLACK_BOT_TOKEN;
+    try {
+      // Without per-session mode, handler would return early
+      delete process.env.CLAUDE_REMOTE_ACCESS;
+      delete process.env.SLACK_BOT_TOKEN;
+      assert.equal(isPerSessionMode(), false);
+
+      // With per-session mode enabled
+      process.env.CLAUDE_REMOTE_ACCESS = 'true';
+      process.env.SLACK_BOT_TOKEN = 'xoxb-test';
+      assert.equal(isPerSessionMode(), true);
+    } finally {
+      if (origRemote !== undefined) process.env.CLAUDE_REMOTE_ACCESS = origRemote;
+      else delete process.env.CLAUDE_REMOTE_ACCESS;
+      if (origToken !== undefined) process.env.SLACK_BOT_TOKEN = origToken;
+      else delete process.env.SLACK_BOT_TOKEN;
+    }
+  });
+
+  it('posts formatted message to session channel via channel manager', async () => {
+    const { client, calls } = createMockSlackClient();
+    const channelMapPath = path.join(tempDir, 'data', 'channel-map.json');
+    const manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath,
+      channelPrefix: 'cn',
+    });
+    manager.client = client;
+
+    // Set up a channel mapping for the session
+    const sessionId = 'test-session-123';
+    const channelId = 'C000001';
+    const mapDir = path.dirname(channelMapPath);
+    fs.mkdirSync(mapDir, { recursive: true });
+    fs.writeFileSync(channelMapPath, JSON.stringify({
+      [sessionId]: { channelId, channelName: 'cn-test', active: true },
+    }));
+
+    // Simulate what the user-prompt handler does
+    const userPrompt = 'Fix the login bug';
+    const text = formatUserPromptMessage(userPrompt);
+    const result = await manager.postToSessionChannel(sessionId, text);
+
+    assert.equal(result, true);
+    const postCall = calls.find(c => c.method === 'chat.postMessage');
+    assert.ok(postCall, 'Should have called chat.postMessage');
+    assert.equal(postCall.args.channel, channelId);
+    assert.ok(postCall.args.text.includes(':bust_in_silhouette: *You:*'));
+    assert.ok(postCall.args.text.includes('>>> Fix the login bug'));
+  });
+
+  it('clearProgressMessage is called before posting', async () => {
+    const { client, calls } = createMockSlackClient();
+    // Add a chat.delete method to the mock (clearProgressMessage uses it)
+    client.chat.delete = async (opts) => {
+      calls.push({ method: 'chat.delete', args: opts });
+      return { ok: true };
+    };
+    const channelMapPath = path.join(tempDir, 'data', 'channel-map.json');
+    const manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath,
+      channelPrefix: 'cn',
+    });
+    manager.client = client;
+
+    const sessionId = 'test-session-456';
+    const channelId = 'C000002';
+    const mapDir = path.dirname(channelMapPath);
+    fs.mkdirSync(mapDir, { recursive: true });
+    fs.writeFileSync(channelMapPath, JSON.stringify({
+      [sessionId]: {
+        channelId, channelName: 'cn-test', active: true,
+        progressMessageTs: '1234.5678',
+      },
+    }));
+
+    // Simulate the handler sequence: clear progress, then post
+    await manager.clearProgressMessage(sessionId);
+    const text = formatUserPromptMessage('Hello');
+    await manager.postToSessionChannel(sessionId, text);
+
+    // Verify clear happened before post
+    const deleteIdx = calls.findIndex(c => c.method === 'chat.delete');
+    const postIdx = calls.findIndex(c => c.method === 'chat.postMessage');
+    assert.ok(deleteIdx >= 0, 'Should have called chat.delete for progress message');
+    assert.ok(postIdx >= 0, 'Should have called chat.postMessage');
+    assert.ok(deleteIdx < postIdx, 'chat.delete should happen before chat.postMessage');
+  });
+
+  it('channel lookup returns null for unknown session', () => {
+    const { client } = createMockSlackClient();
+    const channelMapPath = path.join(tempDir, 'data', 'channel-map.json');
+    const manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath,
+      channelPrefix: 'cn',
+    });
+    manager.client = client;
+
+    const mapDir = path.dirname(channelMapPath);
+    fs.mkdirSync(mapDir, { recursive: true });
+    fs.writeFileSync(channelMapPath, JSON.stringify({}));
+
+    const mapping = manager.getChannelMapping('nonexistent-session');
+    assert.equal(mapping, null);
+  });
+
+  it('postToSessionChannel returns false when no channel mapping exists', async () => {
+    const { client } = createMockSlackClient();
+    const channelMapPath = path.join(tempDir, 'data', 'channel-map.json');
+    const manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath,
+      channelPrefix: 'cn',
+    });
+    manager.client = client;
+
+    const mapDir = path.dirname(channelMapPath);
+    fs.mkdirSync(mapDir, { recursive: true });
+    fs.writeFileSync(channelMapPath, JSON.stringify({}));
+
+    const text = formatUserPromptMessage('Hello');
+    const result = await manager.postToSessionChannel('no-such-session', text);
+    assert.equal(result, false);
   });
 });

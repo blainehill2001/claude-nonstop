@@ -8,10 +8,10 @@
   },
   "scripts": {
     "check": "node --check lib/*.js && node --check remote/*.cjs && node --check bin/claude-nonstop.js && node --check scripts/postinstall.js",
-    "test": "node --test 'test/unit/**/*.test.js' 'test/unit/**/*.test.cjs'",
-    "test:integration": "node --test 'test/integration/**/*.test.js'",
-    "test:security": "node --test 'test/security/**/*.test.js'",
-    "test:all": "node --test 'test/**/*.test.js' 'test/**/*.test.cjs'",
+    "test": "node --experimental-test-module-mocks --test 'test/unit/**/*.test.js' 'test/unit/**/*.test.cjs'",
+    "test:integration": "node --experimental-test-module-mocks --test 'test/integration/**/*.test.js'",
+    "test:security": "node --experimental-test-module-mocks --test 'test/security/**/*.test.js'",
+    "test:all": "node --experimental-test-module-mocks --test 'test/**/*.test.js' 'test/**/*.test.cjs'",
     "webhook": "node remote/start-webhook.cjs",
     "postinstall": "node scripts/postinstall.js"
   },
