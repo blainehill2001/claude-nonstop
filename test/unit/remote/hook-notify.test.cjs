@@ -9,6 +9,7 @@ const {
   extractToolDetail, formatProgressMessage, formatWaitingMessage, findTranscriptPath,
   readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
   FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
+  generateSlugName, isSlugGeneration,
 } = require('../../../remote/hook-notify.cjs');
 
 const FIXTURES_DIR = path.join(__dirname, '..', '..', 'fixtures', 'transcripts');
@@ -923,5 +924,65 @@ describe('user-prompt handler', () => {
     const text = formatUserPromptMessage('Hello');
     const result = await manager.postToSessionChannel('no-such-session', text);
     assert.equal(result, false);
+  });
+});
+
+describe('slug generation', () => {
+  it('is exported from hook-notify', () => {
+    const mod = require('../../../remote/hook-notify.cjs');
+    assert.equal(typeof mod.generateSlugName, 'function');
+  });
+
+  it('converts slug output to Slack-safe channel name segment', () => {
+    assert.equal(generateSlugName('Fix Auth Bug'), 'fix-auth-bug');
+  });
+
+  it('strips non-alphanumeric characters', () => {
+    assert.equal(generateSlugName('fix: the "auth" bug!'), 'fix-the-auth-bug');
+  });
+
+  it('collapses multiple hyphens', () => {
+    assert.equal(generateSlugName('fix---auth---bug'), 'fix-auth-bug');
+  });
+
+  it('strips leading/trailing hyphens', () => {
+    assert.equal(generateSlugName('-fix-bug-'), 'fix-bug');
+  });
+
+  it('truncates to maxLength', () => {
+    const long = 'a-very-long-slug-that-exceeds-the-max-length-allowed';
+    const result = generateSlugName(long, 20);
+    assert.ok(result.length <= 20);
+    assert.ok(!result.endsWith('-'));
+  });
+
+  it('returns null for empty input', () => {
+    assert.equal(generateSlugName(''), null);
+    assert.equal(generateSlugName('   '), null);
+    assert.equal(generateSlugName(null), null);
+  });
+});
+
+describe('CN_SLUG_GENERATION recursion guard', () => {
+  it('isSlugGeneration returns true when env is set', () => {
+    const orig = process.env.CN_SLUG_GENERATION;
+    try {
+      process.env.CN_SLUG_GENERATION = '1';
+      assert.equal(isSlugGeneration(), true);
+    } finally {
+      if (orig !== undefined) process.env.CN_SLUG_GENERATION = orig;
+      else delete process.env.CN_SLUG_GENERATION;
+    }
+  });
+
+  it('isSlugGeneration returns false when env is not set', () => {
+    const orig = process.env.CN_SLUG_GENERATION;
+    try {
+      delete process.env.CN_SLUG_GENERATION;
+      assert.equal(isSlugGeneration(), false);
+    } finally {
+      if (orig !== undefined) process.env.CN_SLUG_GENERATION = orig;
+      else delete process.env.CN_SLUG_GENERATION;
+    }
   });
 });

@@ -304,9 +304,38 @@ function formatWaitingMessage(toolName, toolInput, transcriptContent) {
     return ':hourglass: Waiting for input \u2014 reply here or use `!status` to view.';
 }
 
+// ─── Slug Generation ────────────────────────────────────────────────────────
+
+/**
+ * Check if we're inside a slug generation subprocess.
+ * When true, all hook processing should be skipped.
+ */
+function isSlugGeneration() {
+    return process.env.CN_SLUG_GENERATION === '1';
+}
+
+/**
+ * Convert raw text (e.g. from Haiku output) into a Slack-safe channel name segment.
+ * Returns null if input is empty/whitespace.
+ */
+function generateSlugName(text, maxLength = 50) {
+    if (!text || !text.trim()) return null;
+    let slug = text
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    if (slug.length > maxLength) {
+        slug = slug.substring(0, maxLength).replace(/-$/, '');
+    }
+    return slug || null;
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
+    // Recursion guard: skip all processing when spawned for slug generation
+    if (isSlugGeneration()) return;
     const notificationType = process.argv[2] || 'completed';
     const hookContext = await readStdin();
 
@@ -523,4 +552,6 @@ module.exports = {
     // Buffer helpers exported for testing
     readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
     FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
+    // Slug generation helpers
+    generateSlugName, isSlugGeneration,
 };
