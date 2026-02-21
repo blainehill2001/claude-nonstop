@@ -23,7 +23,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 
 require('./load-env.cjs');
 
@@ -331,6 +331,40 @@ function generateSlugName(text, maxLength = 50) {
     return slug || null;
 }
 
+/**
+ * Spawn `claude -p` with Haiku to generate a short slug from the user's prompt.
+ * Uses execFile (not exec) to avoid shell injection per security rules.
+ * Returns the slug string, or null on failure/timeout.
+ */
+function spawnSlug(promptText) {
+    return new Promise((resolve) => {
+        const truncated = promptText.substring(0, 500);
+        const instruction = `Generate a 2-4 word hyphenated slug summarizing this task. Output ONLY the slug, nothing else. Examples: "fix-auth-bug", "add-dark-mode", "refactor-api-client". Task: ${truncated}`;
+
+        const env = { ...process.env, CN_SLUG_GENERATION: '1' };
+        // Prevent the spawned claude from triggering hooks or creating channels
+        delete env.CLAUDE_REMOTE_ACCESS;
+        // Remove credentials the subprocess doesn't need
+        delete env.SLACK_BOT_TOKEN;
+        delete env.SLACK_APP_TOKEN;
+        delete env.SLACK_INVITE_USER_ID;
+
+        execFile('claude', ['-p', instruction, '--model', 'haiku', '--output-format', 'text'], {
+            env,
+            timeout: 15000,
+            maxBuffer: 1024,
+        }, (error, stdout) => {
+            if (error) {
+                console.warn('Slug generation failed:', error.message);
+                resolve(null);
+                return;
+            }
+            const raw = (stdout || '').trim();
+            resolve(raw || null);
+        });
+    });
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -381,6 +415,28 @@ async function main() {
 
         const text = `:bust_in_silhouette: *You:*\n>>> ${displayText}`;
         await manager.postToSessionChannel(sessionId, text);
+
+        // Auto-rename channel on first user prompt
+        const mapping = manager.getChannelMapping(sessionId);
+        if (mapping && !mapping.renamed) {
+            try {
+                const raw = await spawnSlug(userPrompt);
+                const slug = generateSlugName(raw);
+                if (slug) {
+                    const prefix = manager.channelPrefix;
+                    const safeProject = mapping.project
+                        ? generateSlugName(mapping.project) + '-'
+                        : '';
+                    const newName = `${prefix}-${safeProject}${slug}`
+                        .substring(0, 80)
+                        .replace(/-$/, '');
+                    await manager.renameChannel(sessionId, newName);
+                }
+            } catch (err) {
+                console.warn('Channel rename failed:', err.message);
+            }
+        }
+
         return;
     }
 
@@ -553,5 +609,5 @@ module.exports = {
     readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
     FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
     // Slug generation helpers
-    generateSlugName, isSlugGeneration,
+    generateSlugName, isSlugGeneration, spawnSlug,
 };

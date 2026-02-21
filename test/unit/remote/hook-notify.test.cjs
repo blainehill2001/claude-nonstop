@@ -9,7 +9,7 @@ const {
   extractToolDetail, formatProgressMessage, formatWaitingMessage, findTranscriptPath,
   readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
   FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS,
-  generateSlugName, isSlugGeneration,
+  generateSlugName, isSlugGeneration, spawnSlug,
 } = require('../../../remote/hook-notify.cjs');
 
 const FIXTURES_DIR = path.join(__dirname, '..', '..', 'fixtures', 'transcripts');
@@ -984,5 +984,12 @@ describe('CN_SLUG_GENERATION recursion guard', () => {
       if (orig !== undefined) process.env.CN_SLUG_GENERATION = orig;
       else delete process.env.CN_SLUG_GENERATION;
     }
+  });
+});
+
+describe('spawnSlug', () => {
+  it('is exported from hook-notify', () => {
+    const mod = require('../../../remote/hook-notify.cjs');
+    assert.equal(typeof mod.spawnSlug, 'function');
   });
 });
