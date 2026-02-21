@@ -718,3 +718,83 @@ describe('plan mode transcript integration', () => {
     assert.ok(msg.includes('Files to modify'));
   });
 });
+
+describe('user-prompt handler (source analysis)', () => {
+  const hookSource = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'remote', 'hook-notify.cjs'),
+    'utf-8'
+  );
+
+  it('handles user-prompt notification type', () => {
+    assert.ok(
+      hookSource.includes("notificationType === 'user-prompt'"),
+      'Should have a handler for user-prompt notification type'
+    );
+  });
+
+  it('reads user_prompt from hook context', () => {
+    assert.ok(
+      hookSource.includes('hookContext?.user_prompt'),
+      'Should read user_prompt field from stdin JSON'
+    );
+  });
+
+  it('skips empty or whitespace-only prompts', () => {
+    assert.ok(
+      hookSource.includes("!userPrompt || !userPrompt.trim()"),
+      'Should skip empty/whitespace prompts'
+    );
+  });
+
+  it('clears progress message before posting', () => {
+    // The clearProgressMessage call should appear between the user-prompt check
+    // and the postToSessionChannel call
+    const handlerMatch = hookSource.match(
+      /user-prompt[\s\S]*?clearProgressMessage[\s\S]*?postToSessionChannel/
+    );
+    assert.ok(handlerMatch, 'Should clear progress message before posting user prompt');
+  });
+
+  it('truncates long prompts at 3900 chars', () => {
+    assert.ok(
+      hookSource.includes('MAX_PROMPT_DISPLAY = 3900'),
+      'Should define MAX_PROMPT_DISPLAY as 3900'
+    );
+    assert.ok(
+      hookSource.includes("displayText.substring(0, MAX_PROMPT_DISPLAY) + '...'"),
+      'Should truncate and add ellipsis'
+    );
+  });
+
+  it('formats message with user icon and block quote', () => {
+    assert.ok(
+      hookSource.includes(':bust_in_silhouette: *You:*'),
+      'Should use bust_in_silhouette emoji and bold You prefix'
+    );
+    assert.ok(
+      hookSource.includes('>>> ${displayText}'),
+      'Should use Slack block quote for the prompt text'
+    );
+  });
+
+  it('requires per-session mode and session ID', () => {
+    // The guard should appear before the user_prompt read
+    const handlerMatch = hookSource.match(
+      /user-prompt[\s\S]*?isPerSessionMode[\s\S]*?sessionId[\s\S]*?user_prompt/
+    );
+    assert.ok(handlerMatch, 'Should check isPerSessionMode and sessionId before processing');
+  });
+
+  it('runs async (does not block Claude Code)', () => {
+    // Verify the handler is in the async main() function
+    assert.ok(
+      hookSource.includes('async function main()'),
+      'main() should be async'
+    );
+    // Verify the user-prompt handler uses await
+    const handlerBlock = hookSource.match(
+      /user-prompt[\s\S]*?await manager\.postToSessionChannel/
+    );
+    assert.ok(handlerBlock, 'Should use await for Slack API calls');
+  });
+});

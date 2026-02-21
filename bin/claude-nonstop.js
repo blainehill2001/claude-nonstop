@@ -900,6 +900,7 @@ function getHookCommand(hookType) {
     'SessionStart': 'session-start',
     'PostToolUse': 'tool-use',
     'PreToolUse': 'waiting-for-input',
+    'UserPromptSubmit': 'user-prompt',
   }[hookType];
   return `node "${hookScript}" ${typeArg}`;
 }
@@ -913,7 +914,7 @@ function installHooksToAllProfiles() {
     process.exit(1);
   }
 
-  const hookTypes = ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse'];
+  const hookTypes = ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit'];
 
   for (const account of accounts) {
     const settingsPath = join(account.configDir, 'settings.json');
@@ -951,14 +952,18 @@ function installHooksToAllProfiles() {
       if (hookType === 'PreToolUse') {
         hookEntry.timeout = 15;
       }
+      // UserPromptSubmit posts user's terminal input to Slack
+      if (hookType === 'UserPromptSubmit') {
+        hookEntry.timeout = 10;
+      }
 
       const matcher = { matcher: '', hooks: [hookEntry] };
       // PreToolUse only fires for tools that pause Claude for user input
       if (hookType === 'PreToolUse') {
         matcher.matcher = 'ExitPlanMode|AskUserQuestion';
       }
-      // PostToolUse and PreToolUse must not block Claude Code
-      if (hookType === 'PostToolUse' || hookType === 'PreToolUse') {
+      // PostToolUse, PreToolUse, and UserPromptSubmit must not block Claude Code
+      if (hookType === 'PostToolUse' || hookType === 'PreToolUse' || hookType === 'UserPromptSubmit') {
         matcher.async = true;
       }
 
@@ -999,7 +1004,7 @@ function installHooksToAllProfiles() {
 
 function showHooksStatus() {
   const accounts = getAccounts();
-  const hookTypes = ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse'];
+  const hookTypes = ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit'];
 
   for (const account of accounts) {
     console.log(`\n  ${account.name} (${account.configDir})`);

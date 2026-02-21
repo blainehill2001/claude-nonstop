@@ -333,6 +333,28 @@ async function main() {
         return;
     }
 
+    // Handle user-prompt events from UserPromptSubmit hook
+    // Posts the user's terminal input to the session's Slack channel
+    if (notificationType === 'user-prompt') {
+        if (!isPerSessionMode() || !sessionId) return;
+
+        const userPrompt = hookContext?.user_prompt;
+        if (!userPrompt || !userPrompt.trim()) return;
+
+        const manager = createChannelManager();
+        await manager.clearProgressMessage(sessionId);
+
+        const MAX_PROMPT_DISPLAY = 3900;
+        let displayText = userPrompt.trim();
+        if (displayText.length > MAX_PROMPT_DISPLAY) {
+            displayText = displayText.substring(0, MAX_PROMPT_DISPLAY) + '...';
+        }
+
+        const text = `:bust_in_silhouette: *You:*\n>>> ${displayText}`;
+        await manager.postToSessionChannel(sessionId, text);
+        return;
+    }
+
     // Handle waiting-for-input events from PreToolUse hook (ExitPlanMode, AskUserQuestion)
     // PreToolUse fires BEFORE the tool runs, i.e. when Claude presents the plan or question.
     // PostToolUse fires AFTER the user responds — too late for notification.
