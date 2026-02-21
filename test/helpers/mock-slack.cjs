@@ -53,6 +53,10 @@ function createMockSlackClient() {
         record('chat.update', opts);
         return { ok: true };
       },
+      delete: async (opts) => {
+        record('chat.delete', opts);
+        return { ok: true };
+      },
     },
     reactions: {
       add: async (opts) => {
