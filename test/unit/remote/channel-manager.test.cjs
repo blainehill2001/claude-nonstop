@@ -1041,3 +1041,95 @@ describe('SlackChannelManager.reuseChannelForTmuxSession', () => {
     assert.equal(result.progressMessageTs, undefined);
   });
 });
+
+describe('SlackChannelManager.renameChannel', () => {
+  let tempDir;
+  let manager;
+  let mockCalls;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    const mapDir = path.join(tempDir, 'data');
+    fs.mkdirSync(mapDir, { recursive: true });
+    const { client, calls } = createMockSlackClient();
+    mockCalls = calls;
+    manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: path.join(mapDir, 'channel-map.json'),
+      channelPrefix: 'cn',
+    });
+    manager.client = client;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('renames channel and sets renamed flag', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', channelName: 'cn-proj-feb20-2021', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = await manager.renameChannel('sess-1', 'cn-proj-fix-auth-bug');
+    assert.equal(result, true);
+
+    const renameCalls = mockCalls.filter(c => c.method === 'conversations.rename');
+    assert.equal(renameCalls.length, 1);
+    assert.equal(renameCalls[0].args.channel, 'C001');
+    assert.equal(renameCalls[0].args.name, 'cn-proj-fix-auth-bug');
+
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.equal(map['sess-1'].channelName, 'cn-proj-fix-auth-bug');
+    assert.equal(map['sess-1'].renamed, true);
+  });
+
+  it('returns false for unknown session', async () => {
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify({}));
+    const result = await manager.renameChannel('unknown', 'new-name');
+    assert.equal(result, false);
+  });
+
+  it('returns false for inactive session', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', channelName: 'cn-proj-old', active: false, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = await manager.renameChannel('sess-1', 'new-name');
+    assert.equal(result, false);
+  });
+
+  it('returns false on Slack API error', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', channelName: 'cn-proj-old', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    manager.client.conversations.rename = async () => {
+      throw new Error('name_taken');
+    };
+
+    const result = await manager.renameChannel('sess-1', 'taken-name');
+    assert.equal(result, false);
+
+    // channelName should NOT be updated on failure
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.equal(map['sess-1'].channelName, 'cn-proj-old');
+    assert.equal(map['sess-1'].renamed, undefined);
+  });
+
+  it('skips if already renamed', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', channelName: 'cn-proj-fix-bug', active: true, renamed: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = await manager.renameChannel('sess-1', 'different-name');
+    assert.equal(result, false);
+
+    // No API call should have been made
+    const renameCalls = mockCalls.filter(c => c.method === 'conversations.rename');
+    assert.equal(renameCalls.length, 0);
+  });
+});

@@ -299,6 +299,40 @@ class SlackChannelManager {
         return mapping;
     }
 
+    /**
+     * Rename a session's Slack channel.
+     * Sets `renamed: true` so it only happens once.
+     * @returns {boolean} true if renamed successfully
+     */
+    async renameChannel(sessionId, newName) {
+        const map = this._readChannelMap();
+        const entry = map[sessionId];
+        if (!entry || !entry.active) return false;
+        if (entry.renamed) return false;
+
+        try {
+            await this.client.conversations.rename({
+                channel: entry.channelId,
+                name: newName,
+            });
+        } catch (error) {
+            console.warn('Failed to rename channel:', error.message);
+            return false;
+        }
+
+        // Re-read to avoid clobbering concurrent writes
+        const freshMap = this._readChannelMap();
+        const freshEntry = freshMap[sessionId];
+        if (!freshEntry) return false;
+
+        freshEntry.channelName = newName;
+        freshEntry.renamed = true;
+        this._writeChannelMap(freshMap);
+
+        console.log(`Renamed channel to #${newName} for session ${sessionId}`);
+        return true;
+    }
+
     async postToSessionChannel(sessionId, text, blocks) {
         const mapping = this.getChannelMapping(sessionId);
         if (!mapping) {

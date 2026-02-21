@@ -35,6 +35,10 @@ function createMockSlackClient() {
         record('conversations.archive', opts);
         return { ok: true };
       },
+      rename: async (opts) => {
+        record('conversations.rename', opts);
+        return { ok: true, channel: { id: opts.channel, name: opts.name } };
+      },
       history: async (opts) => {
         record('conversations.history', opts);
         return { messages: [{ ts: '1234567890.000001' }] };
