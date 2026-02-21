@@ -11,6 +11,7 @@ const {
   FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS, USER_RESPONSE_TOOLS,
   formatUserResponse,
   generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
+  buildApprovalButtons, buildControlButtons,
 } = require('../../../remote/hook-notify.cjs');
 
 const FIXTURES_DIR = path.join(__dirname, '..', '..', 'fixtures', 'transcripts');
@@ -993,6 +994,27 @@ describe('spawnSlug', () => {
     const mod = require('../../../remote/hook-notify.cjs');
     assert.equal(typeof mod.spawnSlug, 'function');
   });
+
+  it('returns null when GEMINI_API_KEY is not set', async () => {
+    const orig = process.env.GEMINI_API_KEY;
+    try {
+      delete process.env.GEMINI_API_KEY;
+      const result = await spawnSlug('fix the auth bug');
+      assert.equal(result, null);
+    } finally {
+      if (orig !== undefined) process.env.GEMINI_API_KEY = orig;
+      else delete process.env.GEMINI_API_KEY;
+    }
+  });
+
+  it('is an async function', () => {
+    // spawnSlug returns a promise
+    const orig = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    const result = spawnSlug('test');
+    assert.ok(result instanceof Promise);
+    if (orig !== undefined) process.env.GEMINI_API_KEY = orig;
+  });
 });
 
 describe('USER_RESPONSE_TOOLS', () => {
@@ -1116,20 +1138,20 @@ describe('formatUserResponse', () => {
   });
 });
 
-describe('spawnSlug Claude env stripping', () => {
-  it('strips CLAUDECODE from the environment', () => {
+describe('spawnSlug Gemini API', () => {
+  it('uses Gemini REST API endpoint', () => {
     const src = spawnSlug.toString();
-    assert.ok(src.includes('CLAUDECODE'), 'spawnSlug should strip CLAUDECODE env var');
+    assert.ok(src.includes('generativelanguage.googleapis.com'), 'should use Gemini API');
   });
 
-  it('strips CLAUDE_CODE_SSE_PORT from the environment', () => {
+  it('uses gemini-2.0-flash model', () => {
     const src = spawnSlug.toString();
-    assert.ok(src.includes('CLAUDE_CODE_SSE_PORT'), 'spawnSlug should strip CLAUDE_CODE_SSE_PORT');
+    assert.ok(src.includes('gemini-2.0-flash'), 'should use gemini-2.0-flash model');
   });
 
-  it('strips CLAUDE_CODE_ENTRYPOINT from the environment', () => {
+  it('checks for GEMINI_API_KEY env var', () => {
     const src = spawnSlug.toString();
-    assert.ok(src.includes('CLAUDE_CODE_ENTRYPOINT'), 'spawnSlug should strip CLAUDE_CODE_ENTRYPOINT');
+    assert.ok(src.includes('GEMINI_API_KEY'), 'should check GEMINI_API_KEY');
   });
 });
 
@@ -1158,5 +1180,106 @@ describe('rename worker', () => {
     assert.doesNotThrow(() => {
       spawnRenameWorker('test-session-nonexistent', 'fix auth bug', 'cn');
     });
+  });
+});
+
+describe('buildApprovalButtons', () => {
+  it('returns Approve button for ExitPlanMode', () => {
+    const blocks = buildApprovalButtons('ExitPlanMode', {});
+    assert.ok(blocks);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, 'actions');
+    assert.equal(blocks[0].elements[0].text.text, 'Approve');
+    assert.equal(blocks[0].elements[0].value, 'yes');
+    assert.equal(blocks[0].elements[0].style, 'primary');
+  });
+
+  it('returns option buttons for AskUserQuestion', () => {
+    const input = {
+      questions: [{
+        question: 'Which DB?',
+        options: [
+          { label: 'PostgreSQL', description: 'Relational' },
+          { label: 'MongoDB', description: 'Document' },
+        ],
+      }],
+    };
+    const blocks = buildApprovalButtons('AskUserQuestion', input);
+    assert.ok(blocks);
+    assert.equal(blocks[0].elements.length, 2);
+    assert.equal(blocks[0].elements[0].text.text, 'PostgreSQL');
+    assert.equal(blocks[0].elements[0].value, 'PostgreSQL');
+    assert.equal(blocks[0].elements[0].action_id, 'cn_option_0');
+    assert.equal(blocks[0].elements[0].style, 'primary');
+    assert.equal(blocks[0].elements[1].text.text, 'MongoDB');
+    assert.equal(blocks[0].elements[1].action_id, 'cn_option_1');
+    assert.ok(!blocks[0].elements[1].style);
+  });
+
+  it('limits to 4 options max', () => {
+    const input = {
+      questions: [{
+        question: 'Pick one',
+        options: [
+          { label: 'A' }, { label: 'B' }, { label: 'C' },
+          { label: 'D' }, { label: 'E' }, { label: 'F' },
+        ],
+      }],
+    };
+    const blocks = buildApprovalButtons('AskUserQuestion', input);
+    assert.equal(blocks[0].elements.length, 4);
+  });
+
+  it('returns null for AskUserQuestion with no options', () => {
+    assert.equal(buildApprovalButtons('AskUserQuestion', { questions: [{ question: 'Q?' }] }), null);
+    assert.equal(buildApprovalButtons('AskUserQuestion', { questions: [{ question: 'Q?', options: [] }] }), null);
+  });
+
+  it('returns null for AskUserQuestion with no questions', () => {
+    assert.equal(buildApprovalButtons('AskUserQuestion', {}), null);
+    assert.equal(buildApprovalButtons('AskUserQuestion', { questions: [] }), null);
+  });
+
+  it('returns null for unknown tool', () => {
+    assert.equal(buildApprovalButtons('Read', {}), null);
+  });
+
+  it('truncates long option labels to 75 chars', () => {
+    const longLabel = 'x'.repeat(100);
+    const input = {
+      questions: [{
+        question: 'Pick',
+        options: [{ label: longLabel }],
+      }],
+    };
+    const blocks = buildApprovalButtons('AskUserQuestion', input);
+    assert.equal(blocks[0].elements[0].text.text.length, 75);
+  });
+});
+
+describe('buildControlButtons', () => {
+  it('returns actions block with Stop, Pause, Archive', () => {
+    const blocks = buildControlButtons();
+    assert.ok(blocks);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, 'actions');
+    const labels = blocks[0].elements.map(e => e.text.text);
+    assert.ok(labels.includes('Stop'));
+    assert.ok(labels.includes('Pause'));
+    assert.ok(labels.includes('Archive'));
+  });
+
+  it('Stop button has danger style', () => {
+    const blocks = buildControlButtons();
+    const stop = blocks[0].elements.find(e => e.text.text === 'Stop');
+    assert.equal(stop.style, 'danger');
+  });
+
+  it('has correct action_ids', () => {
+    const blocks = buildControlButtons();
+    const ids = blocks[0].elements.map(e => e.action_id);
+    assert.ok(ids.includes('cn_stop'));
+    assert.ok(ids.includes('cn_pause'));
+    assert.ok(ids.includes('cn_archive'));
   });
 });

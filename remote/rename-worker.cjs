@@ -5,9 +5,9 @@
  *
  * Usage:  node rename-worker.cjs <sessionId> <userPrompt> <channelPrefix>
  *
- * Generates a slug from the user prompt via `claude -p` (Haiku), then
- * renames the Slack channel. Runs detached so the parent hook process can
- * exit immediately without waiting for the ~18s API call.
+ * Generates a slug from the user prompt via Gemini API (or text fallback),
+ * then renames the Slack channel. Runs detached so the parent hook process
+ * can exit immediately.
  */
 
 require('./load-env.cjs');
@@ -40,8 +40,16 @@ async function main() {
     }
 
     try {
+        // Try AI-generated slug first, fall back to text-processing
+        let slug = null;
         const raw = await spawnSlug(userPrompt);
-        const slug = generateSlugName(raw);
+        if (raw) {
+            slug = generateSlugName(raw);
+        }
+        if (!slug) {
+            // Fallback: extract slug from first words of prompt
+            slug = generateSlugName(userPrompt);
+        }
         if (!slug) return;
 
         const safeProject = mapping.project

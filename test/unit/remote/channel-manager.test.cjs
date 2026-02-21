@@ -5,9 +5,9 @@ const path = require('path');
 const { createMockSlackClient } = require('../../helpers/mock-slack.cjs');
 const { createTempDir, removeTempDir } = require('../../helpers/temp-dir.cjs');
 
-// Import markdownToMrkdwn from channel-manager
+// Import from channel-manager
 const SlackChannelManager = require('../../../remote/channel-manager.cjs');
-const { markdownToMrkdwn } = SlackChannelManager;
+const { markdownToMrkdwn, PRUNE_AGE_MS } = SlackChannelManager;
 
 describe('markdownToMrkdwn', () => {
   it('converts **bold** to *bold*', () => {
@@ -1154,5 +1154,330 @@ describe('SlackChannelManager.renameChannel', () => {
     // No API call should have been made
     const renameCalls = mockCalls.filter(c => c.method === 'conversations.rename');
     assert.equal(renameCalls.length, 0);
+  });
+});
+
+// ─── Message Queue Tests ───────────────────────────────────────────────────
+
+const {
+  readMessageQueue, writeMessageQueue, enqueueMessage, drainMessageQueue,
+  MAX_QUEUE_SIZE,
+} = require('../../../remote/channel-manager.cjs');
+
+describe('readMessageQueue', () => {
+  let tempDir;
+
+  beforeEach(() => { tempDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tempDir); });
+
+  it('returns empty array for nonexistent file', () => {
+    const result = readMessageQueue(path.join(tempDir, 'nonexistent.json'));
+    assert.deepEqual(result, []);
+  });
+
+  it('returns empty array for empty file', () => {
+    const p = path.join(tempDir, 'empty.json');
+    fs.writeFileSync(p, '');
+    assert.deepEqual(readMessageQueue(p), []);
+  });
+
+  it('returns empty array for corrupt JSON', () => {
+    const p = path.join(tempDir, 'bad.json');
+    fs.writeFileSync(p, '{not json');
+    assert.deepEqual(readMessageQueue(p), []);
+  });
+
+  it('returns empty array for non-array JSON', () => {
+    const p = path.join(tempDir, 'obj.json');
+    fs.writeFileSync(p, '{"key": "value"}');
+    assert.deepEqual(readMessageQueue(p), []);
+  });
+
+  it('returns array contents from valid file', () => {
+    const p = path.join(tempDir, 'queue.json');
+    const data = [{ text: 'hello', channelId: 'C1', userId: 'U1', timestamp: 1000 }];
+    fs.writeFileSync(p, JSON.stringify(data));
+    const result = readMessageQueue(p);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].text, 'hello');
+  });
+});
+
+describe('writeMessageQueue', () => {
+  let tempDir;
+
+  beforeEach(() => { tempDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tempDir); });
+
+  it('writes queue to file atomically', () => {
+    const p = path.join(tempDir, 'queue.json');
+    writeMessageQueue([{ text: 'test' }], p);
+    assert.ok(fs.existsSync(p));
+    const result = JSON.parse(fs.readFileSync(p, 'utf8'));
+    assert.equal(result[0].text, 'test');
+  });
+
+  it('creates parent directories if missing', () => {
+    const p = path.join(tempDir, 'sub', 'dir', 'queue.json');
+    writeMessageQueue([], p);
+    assert.ok(fs.existsSync(p));
+  });
+
+  it('leaves no .tmp files behind', () => {
+    const p = path.join(tempDir, 'queue.json');
+    writeMessageQueue([{ text: 'test' }], p);
+    const files = fs.readdirSync(tempDir);
+    assert.ok(!files.some(f => f.endsWith('.tmp')));
+  });
+});
+
+describe('enqueueMessage', () => {
+  let tempDir;
+
+  beforeEach(() => { tempDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tempDir); });
+
+  it('adds message to empty queue', () => {
+    const p = path.join(tempDir, 'queue.json');
+    enqueueMessage({ text: 'hello', channelId: 'C1' }, p);
+    const result = readMessageQueue(p);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].text, 'hello');
+  });
+
+  it('appends to existing queue', () => {
+    const p = path.join(tempDir, 'queue.json');
+    enqueueMessage({ text: 'first' }, p);
+    enqueueMessage({ text: 'second' }, p);
+    const result = readMessageQueue(p);
+    assert.equal(result.length, 2);
+    assert.equal(result[0].text, 'first');
+    assert.equal(result[1].text, 'second');
+  });
+
+  it('drops oldest messages when exceeding MAX_QUEUE_SIZE', () => {
+    const p = path.join(tempDir, 'queue.json');
+    for (let i = 0; i < MAX_QUEUE_SIZE + 5; i++) {
+      enqueueMessage({ text: `msg-${i}` }, p);
+    }
+    const result = readMessageQueue(p);
+    assert.equal(result.length, MAX_QUEUE_SIZE);
+    // First message should be msg-5 (oldest 5 dropped)
+    assert.equal(result[0].text, 'msg-5');
+    assert.equal(result[result.length - 1].text, `msg-${MAX_QUEUE_SIZE + 4}`);
+  });
+});
+
+describe('drainMessageQueue', () => {
+  let tempDir;
+
+  beforeEach(() => { tempDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tempDir); });
+
+  it('returns all messages and clears queue', () => {
+    const p = path.join(tempDir, 'queue.json');
+    enqueueMessage({ text: 'a' }, p);
+    enqueueMessage({ text: 'b' }, p);
+
+    const drained = drainMessageQueue(p);
+    assert.equal(drained.length, 2);
+    assert.equal(drained[0].text, 'a');
+
+    // Queue should now be empty
+    const remaining = readMessageQueue(p);
+    assert.deepEqual(remaining, []);
+  });
+
+  it('returns empty array for nonexistent queue', () => {
+    const p = path.join(tempDir, 'nonexistent.json');
+    const drained = drainMessageQueue(p);
+    assert.deepEqual(drained, []);
+  });
+});
+
+describe('MAX_QUEUE_SIZE', () => {
+  it('is 50', () => {
+    assert.equal(MAX_QUEUE_SIZE, 50);
+  });
+});
+
+describe('PRUNE_AGE_MS', () => {
+  it('is 24 hours', () => {
+    assert.equal(PRUNE_AGE_MS, 24 * 60 * 60 * 1000);
+  });
+});
+
+describe('listAllChannels', () => {
+  let tempDir, mapPath, manager;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    mapPath = path.join(tempDir, 'channel-map.json');
+    const mock = createMockSlackClient();
+    manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: mapPath,
+    });
+    manager.client = mock.client;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('returns empty array when no channels exist', () => {
+    const result = manager.listAllChannels();
+    assert.deepEqual(result, []);
+  });
+
+  it('returns all channel entries with their properties', () => {
+    const map = {
+      'session-1': {
+        channelId: 'C001',
+        channelName: 'cn-project-feb20',
+        active: true,
+        createdAt: '2026-02-20T00:00:00Z',
+        tmuxSession: 'cn-project-1234',
+        cwd: '/home/user/project',
+      },
+      'session-2': {
+        channelId: 'C002',
+        channelName: 'cn-other-feb20',
+        active: false,
+        archivedAt: '2026-02-20T12:00:00Z',
+        createdAt: '2026-02-19T00:00:00Z',
+      },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+
+    const result = manager.listAllChannels();
+    assert.equal(result.length, 2);
+    assert.equal(result[0].sessionId, 'session-1');
+    assert.equal(result[0].active, true);
+    assert.equal(result[0].channelName, 'cn-project-feb20');
+    assert.equal(result[1].sessionId, 'session-2');
+    assert.equal(result[1].active, false);
+    assert.equal(result[1].archivedAt, '2026-02-20T12:00:00Z');
+  });
+});
+
+describe('cleanupStaleChannels', () => {
+  let tempDir, mapPath, manager, calls;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    mapPath = path.join(tempDir, 'channel-map.json');
+    const mock = createMockSlackClient();
+    calls = mock.calls;
+    manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: mapPath,
+    });
+    manager.client = mock.client;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('returns zero counts when no stale entries exist', async () => {
+    const map = {
+      'active-session': {
+        channelId: 'C001',
+        active: true,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+
+    const result = await manager.cleanupStaleChannels();
+    assert.equal(result.archived, 0);
+    assert.equal(result.purged, 0);
+  });
+
+  it('purges inactive entries older than PRUNE_AGE_MS', async () => {
+    const staleDate = new Date(Date.now() - PRUNE_AGE_MS - 1000).toISOString();
+    const map = {
+      'stale-session': {
+        channelId: 'C001',
+        active: false,
+        archivedAt: staleDate,
+        createdAt: staleDate,
+      },
+      'active-session': {
+        channelId: 'C002',
+        active: true,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+
+    const result = await manager.cleanupStaleChannels();
+    assert.equal(result.purged, 1);
+
+    // Verify the stale entry was removed from the map
+    const updatedMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+    assert.equal(updatedMap['stale-session'], undefined);
+    assert.ok(updatedMap['active-session']);
+  });
+
+  it('archives unarchived stale channels via Slack API', async () => {
+    const staleDate = new Date(Date.now() - PRUNE_AGE_MS - 1000).toISOString();
+    const map = {
+      'stale-unarchived': {
+        channelId: 'C001',
+        active: false,
+        createdAt: staleDate,
+        // No archivedAt — channel not yet archived in Slack
+      },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+
+    const result = await manager.cleanupStaleChannels();
+    assert.equal(result.archived, 1);
+    assert.equal(result.purged, 1);
+
+    // Verify Slack archive was called
+    const archiveCalls = calls.filter(c => c.method === 'conversations.archive');
+    assert.equal(archiveCalls.length, 1);
+    assert.equal(archiveCalls[0].args.channel, 'C001');
+  });
+
+  it('skips already-archived channels (no Slack API call)', async () => {
+    const staleDate = new Date(Date.now() - PRUNE_AGE_MS - 1000).toISOString();
+    const map = {
+      'stale-archived': {
+        channelId: 'C001',
+        active: false,
+        archivedAt: staleDate,
+        createdAt: staleDate,
+      },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+
+    const result = await manager.cleanupStaleChannels();
+    assert.equal(result.archived, 0);
+    assert.equal(result.purged, 1);
+    const archiveCalls = calls.filter(c => c.method === 'conversations.archive');
+    assert.equal(archiveCalls.length, 0);
+  });
+
+  it('keeps recent inactive entries', async () => {
+    const recentDate = new Date(Date.now() - 1000).toISOString(); // 1 second ago
+    const map = {
+      'recent-inactive': {
+        channelId: 'C001',
+        active: false,
+        archivedAt: recentDate,
+        createdAt: recentDate,
+      },
+    };
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+
+    const result = await manager.cleanupStaleChannels();
+    assert.equal(result.purged, 0);
+
+    const updatedMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+    assert.ok(updatedMap['recent-inactive']);
   });
 });

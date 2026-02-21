@@ -9,6 +9,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const SlackChannelManager = require('./channel-manager.cjs');
+const { enqueueMessage } = require('./channel-manager.cjs');
 
 class SlackWebhook {
     constructor(config = {}) {
@@ -88,15 +89,21 @@ class SlackWebhook {
                 if (text === '!status') {
                     if (sessionInfo.tmuxSession) {
                         try {
+                            // Session metadata header
+                            const status = sessionInfo.sleeping ? ':zzz: sleeping' :
+                                sessionInfo.paused ? ':double_vertical_bar: paused' : ':green_circle: running';
+                            const project = sessionInfo.cwd ? sessionInfo.cwd.split('/').pop() : 'unknown';
+                            const header = `*${project}* | ${status} | tmux: \`${sessionInfo.tmuxSession}\``;
+
                             const { stdout } = await execFileAsync('tmux', ['capture-pane', '-p', '-t', sessionInfo.tmuxSession], {
                                 encoding: 'utf8',
                                 timeout: 5000,
                             });
                             let paneContent = (stdout || '').trimEnd();
-                            if (paneContent.length > 3900) {
-                                paneContent = paneContent.substring(paneContent.length - 3900);
+                            if (paneContent.length > 3800) {
+                                paneContent = paneContent.substring(paneContent.length - 3800);
                             }
-                            await say('```\n' + paneContent + '\n```');
+                            await say(header + '\n```\n' + paneContent + '\n```');
                         } catch {
                             await say(':warning: Failed to capture terminal — tmux session may have ended');
                         }
@@ -122,6 +129,19 @@ class SlackWebhook {
                     } else {
                         await say('No tmux session associated with this channel.');
                     }
+                    return;
+                }
+
+                // If session is sleeping or paused, queue message for later replay
+                if (sessionInfo.sleeping || sessionInfo.paused) {
+                    enqueueMessage({
+                        text,
+                        channelId: message.channel,
+                        userId: message.user,
+                        timestamp: Date.now(),
+                        tmuxSession: sessionInfo.tmuxSession,
+                    });
+                    await say(':zzz: Queued \u2014 will be sent when session wakes up.');
                     return;
                 }
 
@@ -179,8 +199,115 @@ class SlackWebhook {
           }
         });
 
+        // ─── Interactive Button Handlers ────────────────────────────────────
+
+        // Control: Stop button
+        this.app.action('cn_stop', async ({ body, ack }) => {
+            await ack();
+            const channelId = body.channel?.id;
+            if (!channelId) return;
+            const channelManager = this._getChannelManager();
+            const sessionInfo = channelManager.getSessionByChannelId(channelId);
+            if (sessionInfo?.tmuxSession) {
+                try {
+                    await execFileAsync('tmux', ['send-keys', '-t', sessionInfo.tmuxSession, 'C-c'], { timeout: 5000 });
+                    await this._updateButtonMessage(body, ':stop_sign: Interrupt sent.');
+                } catch {
+                    await this._updateButtonMessage(body, ':warning: Failed to send interrupt.');
+                }
+            }
+        });
+
+        // Control: Pause button (sets flag so webhook queues messages)
+        this.app.action('cn_pause', async ({ body, ack }) => {
+            await ack();
+            const channelId = body.channel?.id;
+            if (!channelId) return;
+            const channelManager = this._getChannelManager();
+            const sessionInfo = channelManager.getSessionByChannelId(channelId);
+            if (sessionInfo) {
+                const map = channelManager._readChannelMap();
+                for (const [, entry] of Object.entries(map)) {
+                    if (entry.channelId === channelId && entry.active) {
+                        entry.paused = true;
+                        break;
+                    }
+                }
+                channelManager._writeChannelMap(map);
+                await this._updateButtonMessage(body, ':double_vertical_bar: Session paused. Messages will be queued.');
+            }
+        });
+
+        // Control: Resume button (clears pause, replays queued)
+        this.app.action('cn_resume', async ({ body, ack }) => {
+            await ack();
+            const channelId = body.channel?.id;
+            if (!channelId) return;
+            const channelManager = this._getChannelManager();
+            const sessionInfo = channelManager.getSessionByChannelId(channelId);
+            if (sessionInfo) {
+                const map = channelManager._readChannelMap();
+                for (const [, entry] of Object.entries(map)) {
+                    if (entry.channelId === channelId && entry.active) {
+                        delete entry.paused;
+                        break;
+                    }
+                }
+                channelManager._writeChannelMap(map);
+                await this._updateButtonMessage(body, ':arrow_forward: Session resumed.');
+            }
+        });
+
+        // Control: Archive button
+        this.app.action('cn_archive', async ({ body, ack }) => {
+            await ack();
+            const channelId = body.channel?.id;
+            if (!channelId) return;
+            const channelManager = this._getChannelManager();
+            try {
+                await channelManager.archiveChannel(channelId);
+                // Channel is archived; no need to update message
+            } catch {
+                await this._updateButtonMessage(body, ':warning: Failed to archive channel.');
+            }
+        });
+
+        // Approval: dynamic option buttons from AskUserQuestion
+        this.app.action(/^cn_option_\d+$/, async ({ body, action, ack }) => {
+            await ack();
+            const channelId = body.channel?.id;
+            if (!channelId) return;
+            const channelManager = this._getChannelManager();
+            const sessionInfo = channelManager.getSessionByChannelId(channelId);
+            if (sessionInfo?.tmuxSession) {
+                const optionText = action.value || '';
+                if (optionText) {
+                    await this._executeTmuxCommand(optionText, { tmuxSession: sessionInfo.tmuxSession });
+                }
+                await this._updateButtonMessage(body, `:white_check_mark: Selected: ${optionText}`);
+            }
+        });
+
         await this.app.start();
         console.log(':zap: Slack bot is running in Socket Mode');
+    }
+
+    /**
+     * Replace button message with a text-only confirmation (disables buttons).
+     */
+    async _updateButtonMessage(body, text) {
+        try {
+            const channelId = body.channel?.id;
+            const messageTs = body.message?.ts;
+            if (channelId && messageTs) {
+                await this.app.client.chat.update({
+                    channel: channelId,
+                    ts: messageTs,
+                    text,
+                    blocks: [],
+                });
+            }
+        } catch { /* best effort */ }
     }
 
     /**

@@ -23,7 +23,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { execFileSync, execFile, spawn: spawnChild } = require('child_process');
+const { execFileSync, spawn: spawnChild } = require('child_process');
 
 require('./load-env.cjs');
 
@@ -276,6 +276,56 @@ function formatProgressMessage(events) {
 }
 
 /**
+ * Build Block Kit action buttons for AskUserQuestion options.
+ * Returns an array of Block Kit blocks, or null if no options to show.
+ */
+function buildApprovalButtons(toolName, toolInput) {
+    if (toolName === 'ExitPlanMode') {
+        return [
+            {
+                type: 'actions',
+                elements: [
+                    { type: 'button', text: { type: 'plain_text', text: 'Approve' }, action_id: 'cn_option_0', value: 'yes', style: 'primary' },
+                ],
+            },
+        ];
+    }
+    if (toolName === 'AskUserQuestion') {
+        const questions = toolInput?.questions;
+        if (!questions || questions.length === 0) return null;
+        const options = questions[0]?.options;
+        if (!options || options.length === 0) return null;
+
+        const elements = options.slice(0, 4).map((opt, i) => ({
+            type: 'button',
+            text: { type: 'plain_text', text: (opt.label || `Option ${i + 1}`).substring(0, 75) },
+            action_id: `cn_option_${i}`,
+            value: opt.label || `Option ${i + 1}`,
+            ...(i === 0 ? { style: 'primary' } : {}),
+        }));
+
+        return [{ type: 'actions', elements }];
+    }
+    return null;
+}
+
+/**
+ * Build Block Kit control buttons for session management.
+ */
+function buildControlButtons() {
+    return [
+        {
+            type: 'actions',
+            elements: [
+                { type: 'button', text: { type: 'plain_text', text: 'Stop' }, action_id: 'cn_stop', style: 'danger' },
+                { type: 'button', text: { type: 'plain_text', text: 'Pause' }, action_id: 'cn_pause' },
+                { type: 'button', text: { type: 'plain_text', text: 'Archive' }, action_id: 'cn_archive' },
+            ],
+        },
+    ];
+}
+
+/**
  * Format a notification for tools that pause Claude to wait for user input.
  * @param {string} toolName
  * @param {object} toolInput
@@ -375,44 +425,50 @@ function generateSlugName(text, maxLength = 50) {
 }
 
 /**
- * Spawn `claude -p` with Haiku to generate a short slug from the user's prompt.
- * Uses execFile (not exec) to avoid shell injection per security rules.
- * Returns the slug string, or null on failure/timeout.
+ * Generate a short slug from the user's prompt using Gemini REST API.
+ * Falls back to null if GEMINI_API_KEY is not set or API call fails.
+ * No SDK dependency — raw fetch() to REST endpoint.
+ *
+ * @param {string} promptText
+ * @returns {Promise<string|null>}
  */
-function spawnSlug(promptText) {
-    return new Promise((resolve) => {
-        const truncated = promptText.substring(0, 500);
-        const instruction = `Generate a 2-4 word hyphenated slug summarizing this task. Output ONLY the slug, nothing else. Examples: "fix-auth-bug", "add-dark-mode", "refactor-api-client". Task: ${truncated}`;
+async function spawnSlug(promptText) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
 
-        const env = { ...process.env, CN_SLUG_GENERATION: '1' };
-        // Strip Claude Code internal env vars so the subprocess runs independently
-        // (CLAUDECODE blocks nested sessions, CLAUDE_CODE_SSE_PORT causes hangs)
-        delete env.CLAUDECODE;
-        delete env.CLAUDE_CODE_SSE_PORT;
-        delete env.CLAUDE_CODE_ENTRYPOINT;
-        // Prevent the spawned claude from triggering hooks or creating channels
-        delete env.CLAUDE_REMOTE_ACCESS;
-        // Remove credentials the subprocess doesn't need
-        delete env.SLACK_BOT_TOKEN;
-        delete env.SLACK_APP_TOKEN;
-        delete env.SLACK_INVITE_USER_ID;
+    const truncated = promptText.substring(0, 500);
+    const instruction = `Generate a 2-4 word hyphenated slug summarizing this task. Output ONLY the slug, nothing else. Examples: "fix-auth-bug", "add-dark-mode", "refactor-api-client". Task: ${truncated}`;
 
-        const child = execFile('claude', ['-p', instruction, '--model', 'haiku', '--output-format', 'text'], {
-            env,
-            timeout: 30000,
-            maxBuffer: 1024,
-        }, (error, stdout) => {
-            if (error) {
-                console.warn('Slug generation failed:', error.message);
-                resolve(null);
-                return;
-            }
-            const raw = (stdout || '').trim();
-            resolve(raw || null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: instruction }] }],
+                generationConfig: { maxOutputTokens: 50, temperature: 0.3 },
+            }),
+            signal: controller.signal,
         });
-        // Close stdin so claude -p doesn't wait for input
-        child.stdin.end();
-    });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+            console.warn(`Gemini API error: HTTP ${res.status}`);
+            return null;
+        }
+
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        return text ? text.trim() : null;
+    } catch (error) {
+        clearTimeout(timeoutId);
+        console.warn('Slug generation failed:', error.message);
+        return null;
+    }
 }
 
 // ─── Detached Rename Worker ──────────────────────────────────────────────────
@@ -442,6 +498,27 @@ function spawnRenameWorker(sessionId, userPrompt, channelPrefix) {
         child.unref();
     } catch (err) {
         console.warn('Failed to spawn rename worker:', err.message);
+    }
+}
+
+// ─── Detached Countdown Worker ────────────────────────────────────────────────
+
+const COUNTDOWN_WORKER_PATH = path.join(__dirname, 'countdown-worker.cjs');
+
+/**
+ * Spawn countdown-worker.cjs as a detached process that updates a Slack message.
+ * Fire-and-forget: the hook process exits immediately.
+ */
+function spawnCountdownWorker(channelId, messageTs, wakeAtIso) {
+    try {
+        const child = spawnChild('node', [COUNTDOWN_WORKER_PATH, channelId, messageTs, wakeAtIso], {
+            detached: true,
+            stdio: 'ignore',
+            env: process.env,
+        });
+        child.unref();
+    } catch (err) {
+        console.warn('Failed to spawn countdown worker:', err.message);
     }
 }
 
@@ -529,7 +606,16 @@ async function main() {
         }
 
         const text = formatWaitingMessage(toolName, toolInput, transcriptContent);
-        await manager.postToSessionChannel(sessionId, text);
+        const approvalBlocks = buildApprovalButtons(toolName, toolInput);
+        if (approvalBlocks) {
+            const blocks = [
+                { type: 'section', text: { type: 'mrkdwn', text: text.substring(0, 3000) } },
+                ...approvalBlocks,
+            ];
+            await manager.postToSessionChannel(sessionId, text, blocks);
+        } else {
+            await manager.postToSessionChannel(sessionId, text);
+        }
         return;
     }
 
@@ -589,11 +675,34 @@ async function main() {
         if (!resolvedId) return;
 
         const { current_account, sleep_ms, reset_at } = hookContext || {};
+        const wakeAt = new Date(Date.now() + (sleep_ms || 0));
+        const wakeTime = wakeAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const hours = Math.floor((sleep_ms || 0) / (1000 * 60 * 60));
         const minutes = Math.floor(((sleep_ms || 0) % (1000 * 60 * 60)) / (1000 * 60));
         const duration = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-        const text = `:zzz: All accounts near rate limit. Sleeping for ${duration} (until reset).\nCurrent account: "${current_account}"`;
-        await manager.postToSessionChannel(resolvedId, text);
+        const text = `:zzz: All accounts exhausted. Waking at ${wakeTime} (${duration} remaining)\nCurrent account: "${current_account}"`;
+
+        const mapping = manager.getChannelMapping(resolvedId);
+        if (mapping) {
+            try {
+                const result = await manager.client.chat.postMessage({
+                    channel: mapping.channelId,
+                    text,
+                });
+                // Spawn countdown worker to update the message every 5 min
+                if (result.ts && reset_at) {
+                    spawnCountdownWorker(mapping.channelId, result.ts, wakeAt.toISOString());
+                    // Save the countdown message ts for cleanup on wake
+                    const map = manager._readChannelMap();
+                    if (map[resolvedId]) {
+                        map[resolvedId].countdownMessageTs = result.ts;
+                        manager._writeChannelMap(map);
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to post sleep countdown:', err.message);
+            }
+        }
         return;
     }
 
@@ -604,6 +713,22 @@ async function main() {
         const manager = createChannelManager();
         const resolvedId = sessionId || manager.getSessionByCwd(currentDir)?.sessionId;
         if (!resolvedId) return;
+
+        // Delete the countdown message if it exists
+        const mapping = manager.getChannelMapping(resolvedId);
+        if (mapping && mapping.countdownMessageTs) {
+            try {
+                await manager.client.chat.delete({
+                    channel: mapping.channelId,
+                    ts: mapping.countdownMessageTs,
+                });
+            } catch { /* message may already be deleted */ }
+            const map = manager._readChannelMap();
+            if (map[resolvedId]) {
+                delete map[resolvedId].countdownMessageTs;
+                manager._writeChannelMap(map);
+            }
+        }
 
         const { best_account } = hookContext || {};
         const text = best_account
@@ -697,4 +822,8 @@ module.exports = {
     formatUserResponse,
     // Slug generation helpers
     generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
+    // Countdown worker
+    spawnCountdownWorker, COUNTDOWN_WORKER_PATH,
+    // Button builders
+    buildApprovalButtons, buildControlButtons,
 };

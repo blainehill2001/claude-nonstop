@@ -7,9 +7,9 @@
 const { WebClient } = require('@slack/web-api');
 const path = require('path');
 const fs = require('fs');
-const { CHANNEL_MAP_PATH, PROGRESS_DIR } = require('./paths.cjs');
+const { CHANNEL_MAP_PATH, PROGRESS_DIR, MESSAGE_QUEUE_PATH } = require('./paths.cjs');
 
-const PRUNE_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const PRUNE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Convert GitHub-flavored Markdown to Slack mrkdwn.
@@ -591,7 +591,132 @@ class SlackChannelManager {
 
         console.log(`Archived Slack channel ${channelId}`);
     }
+
+    /**
+     * List all channel-map entries with their status.
+     * @returns {Array<{sessionId: string, channelId: string, channelName: string, active: boolean, createdAt: string|null, archivedAt: string|null, tmuxSession: string|null, cwd: string|null}>}
+     */
+    listAllChannels() {
+        const map = this._readChannelMap();
+        return Object.entries(map).map(([sessionId, entry]) => ({
+            sessionId,
+            channelId: entry.channelId || null,
+            channelName: entry.channelName || null,
+            active: !!entry.active,
+            createdAt: entry.createdAt || null,
+            archivedAt: entry.archivedAt || null,
+            tmuxSession: entry.tmuxSession || null,
+            cwd: entry.cwd || null,
+        }));
+    }
+
+    /**
+     * Archive stale Slack channels and purge their map entries.
+     * Stale = inactive + older than PRUNE_AGE_MS.
+     * @returns {Promise<{archived: number, purged: number}>}
+     */
+    async cleanupStaleChannels() {
+        const map = this._readChannelMap();
+        const now = Date.now();
+        let archived = 0;
+        let purged = 0;
+        const toRemove = [];
+
+        for (const [sessionId, entry] of Object.entries(map)) {
+            if (entry.active) continue;
+            const archivedAt = entry.archivedAt ? new Date(entry.archivedAt).getTime() : 0;
+            const createdAt = entry.createdAt ? new Date(entry.createdAt).getTime() : 0;
+            const refTime = archivedAt || createdAt;
+            if (!refTime || (now - refTime) < PRUNE_AGE_MS) continue;
+
+            // Try to archive the Slack channel if it hasn't been archived yet
+            if (entry.channelId && !entry.archivedAt) {
+                try {
+                    await this.client.conversations.archive({ channel: entry.channelId });
+                    archived++;
+                } catch (error) {
+                    if (error.data?.error !== 'already_archived') {
+                        // Skip if archive fails (channel may be deleted)
+                    }
+                }
+            }
+            toRemove.push(sessionId);
+        }
+
+        // Remove purged entries
+        for (const id of toRemove) {
+            delete map[id];
+            purged++;
+        }
+
+        if (toRemove.length > 0) {
+            this._writeChannelMap(map);
+        }
+
+        return { archived, purged };
+    }
+}
+
+// ─── Message Queue (for sleep mode) ─────────────────────────────────────────
+
+const MAX_QUEUE_SIZE = 50;
+
+/**
+ * Read the message queue from disk.
+ * @returns {Array<{text: string, channelId: string, userId: string, timestamp: number, tmuxSession: string}>}
+ */
+function readMessageQueue(queuePath) {
+    const p = queuePath || MESSAGE_QUEUE_PATH;
+    try {
+        if (!fs.existsSync(p)) return [];
+        const raw = fs.readFileSync(p, 'utf8');
+        if (!raw.trim()) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Write the message queue to disk (atomic).
+ */
+function writeMessageQueue(queue, queuePath) {
+    const p = queuePath || MESSAGE_QUEUE_PATH;
+    const dir = path.dirname(p);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmpFile = path.join(dir, `.message-queue.${process.pid}.${Date.now()}.tmp`);
+    fs.writeFileSync(tmpFile, JSON.stringify(queue, null, 2), { mode: 0o600 });
+    fs.renameSync(tmpFile, p);
+}
+
+/**
+ * Enqueue a message for later replay (during sleep).
+ * Drops oldest messages if queue exceeds MAX_QUEUE_SIZE.
+ */
+function enqueueMessage(message, queuePath) {
+    const queue = readMessageQueue(queuePath);
+    queue.push(message);
+    if (queue.length > MAX_QUEUE_SIZE) {
+        queue.splice(0, queue.length - MAX_QUEUE_SIZE);
+    }
+    writeMessageQueue(queue, queuePath);
+}
+
+/**
+ * Drain and clear the message queue. Returns all queued messages.
+ */
+function drainMessageQueue(queuePath) {
+    const queue = readMessageQueue(queuePath);
+    writeMessageQueue([], queuePath);
+    return queue;
 }
 
 module.exports = SlackChannelManager;
 module.exports.markdownToMrkdwn = markdownToMrkdwn;
+module.exports.readMessageQueue = readMessageQueue;
+module.exports.writeMessageQueue = writeMessageQueue;
+module.exports.enqueueMessage = enqueueMessage;
+module.exports.drainMessageQueue = drainMessageQueue;
+module.exports.MAX_QUEUE_SIZE = MAX_QUEUE_SIZE;
+module.exports.PRUNE_AGE_MS = PRUNE_AGE_MS;

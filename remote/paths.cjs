@@ -14,4 +14,6 @@ const PROGRESS_DIR = path.join(DATA_DIR, 'progress');
 const LOG_DIR = path.join(CONFIG_DIR, 'logs');
 const LOG_PATH = path.join(LOG_DIR, 'webhook.log');
 
-module.exports = { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, PROGRESS_DIR, LOG_DIR, LOG_PATH };
+const MESSAGE_QUEUE_PATH = path.join(DATA_DIR, 'message-queue.json');
+
+module.exports = { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, PROGRESS_DIR, LOG_DIR, LOG_PATH, MESSAGE_QUEUE_PATH };

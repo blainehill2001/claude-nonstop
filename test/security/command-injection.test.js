@@ -44,7 +44,8 @@ describe('security: no exec/execSync with string interpolation', () => {
     // Exclude files that have no subprocess calls (pure logic modules)
     const excluded = [
       'remote/start-webhook.cjs', 'remote/load-env.cjs', 'remote/paths.cjs',
-      'lib/platform.js', 'lib/scorer.js', 'lib/usage.js', 'lib/launch.js',
+      'remote/logger.cjs', 'remote/countdown-worker.cjs', 'remote/rename-worker.cjs',
+      'lib/platform.js', 'lib/scorer.js', 'lib/usage.js', 'lib/launch.js', 'lib/logger.js',
     ];
     const reallyMissing = missing.filter(f => !excluded.includes(f));
 
@@ -135,10 +136,10 @@ describe('security: subprocess calls use array arguments', () => {
     assert.ok(!content.includes('execFileSync(`'), 'Should not use template literals with execFileSync');
   });
 
-  it('webhook.cjs uses spawnSync with array args', () => {
+  it('webhook.cjs uses execFile with array args', () => {
     const content = readFileSync(join(PROJECT_ROOT, 'remote', 'webhook.cjs'), 'utf-8');
-    assert.ok(content.includes('spawnSync'));
-    assert.ok(!content.includes('spawnSync(`'), 'Should not use template literals with spawnSync');
+    assert.ok(content.includes('execFile'), 'webhook.cjs should use execFile');
+    assert.ok(!content.includes('execFile(`'), 'Should not use template literals with execFile');
   });
 
   it('reauth.js uses spawn with array args (not string)', () => {

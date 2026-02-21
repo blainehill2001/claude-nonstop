@@ -10,7 +10,8 @@
  *   remove <name>      Remove a registered account
  *   reauth             Re-authenticate accounts with expired tokens
  *   list               List all accounts with auth status
- *   status             Show detailed usage for all accounts
+ *   status [--json]    Show detailed usage, scores, and sessions
+ *   channels           List/cleanup mapped Slack channels
  *   setup [flags]      Slack remote access setup (interactive or via flags/env)
  *   webhook            Start the Slack webhook (Socket Mode, foreground)
  *   webhook install    Install + start webhook as launchd service
@@ -33,7 +34,7 @@ import { fileURLToPath } from 'url';
 import { addAccount, removeAccount, getAccounts, ensureDefaultAccount, CONFIG_DIR, DEFAULT_CLAUDE_DIR } from '../lib/config.js';
 import { readCredentials, isTokenExpired, deleteKeychainEntry } from '../lib/keychain.js';
 import { checkAllUsage, checkUsage, fetchProfile } from '../lib/usage.js';
-import { pickBestAccount } from '../lib/scorer.js';
+import { pickBestAccount, effectiveScore } from '../lib/scorer.js';
 import { run } from '../lib/runner.js';
 import { reauthAccount, silentRefresh } from '../lib/reauth.js';
 import { isMacOS } from '../lib/platform.js';
@@ -64,7 +65,7 @@ try {
       break;
 
     case 'status':
-      await cmdStatus();
+      await cmdStatus(args.slice(1));
       break;
 
     case 'setup':
@@ -93,6 +94,10 @@ try {
 
     case 'resume':
       await cmdResume(args.slice(1));
+      break;
+
+    case 'channels':
+      await cmdChannels(args.slice(1));
       break;
 
     case 'help':
@@ -387,15 +392,20 @@ async function cmdList() {
   }
 }
 
-async function cmdStatus() {
+async function cmdStatus(args = []) {
+  const jsonMode = args.includes('--json');
   const accounts = getAccounts();
 
   if (accounts.length === 0) {
-    console.log('No accounts registered.');
+    if (jsonMode) {
+      console.log(JSON.stringify({ accounts: [], sessions: [] }));
+    } else {
+      console.log('No accounts registered.');
+    }
     return;
   }
 
-  console.log('Checking usage for all accounts...\n');
+  if (!jsonMode) console.log('Checking usage for all accounts...\n');
 
   // Read credentials for all accounts
   const accountsWithTokens = accounts.map(a => {
@@ -406,9 +416,13 @@ async function cmdStatus() {
   const authenticated = accountsWithTokens.filter(a => a.token);
   const unauthenticated = accountsWithTokens.filter(a => !a.token);
 
+  let withUsage = [];
+  let profileMap = {};
+
   if (authenticated.length > 0) {
     // Fetch usage and profiles in parallel
-    let [withUsage, profiles] = await Promise.all([
+    let profiles;
+    [withUsage, profiles] = await Promise.all([
       checkAllUsage(authenticated),
       Promise.all(authenticated.map(a => fetchProfile(a.token))),
     ]);
@@ -420,12 +434,10 @@ async function cmdStatus() {
     if (rejected.length > 0) {
       for (const account of rejected) {
         if (await silentRefresh(account)) {
-          // Re-read token and retry usage check
           const creds = readCredentials(account.configDir);
           if (creds.token) {
             account.token = creds.token;
             account.usage = await checkUsage(creds.token);
-            // Re-fetch profile with refreshed token
             const profile = await fetchProfile(creds.token);
             const idx = authenticated.findIndex(a => a.name === account.name);
             if (idx !== -1) profiles[idx] = profile;
@@ -434,46 +446,169 @@ async function cmdStatus() {
       }
     }
 
-    // Merge profiles into usage results
-    const profileMap = Object.fromEntries(authenticated.map((a, i) => [a.name, profiles[i]]));
+    profileMap = Object.fromEntries(authenticated.map((a, i) => [a.name, profiles[i]]));
+  }
 
-    // Find best account for display
-    const best = pickBestAccount(withUsage);
-    const bestName = best?.account?.name;
+  // Read active sessions from channel-map.json
+  const channelMapPath = join(CONFIG_DIR, 'data', 'channel-map.json');
+  let sessions = [];
+  try {
+    if (existsSync(channelMapPath)) {
+      const raw = readFileSync(channelMapPath, 'utf8');
+      const map = JSON.parse(raw || '{}');
+      sessions = Object.entries(map)
+        .filter(([, entry]) => entry.active)
+        .map(([sessionId, entry]) => ({
+          sessionId,
+          channelName: entry.channelName || null,
+          tmuxSession: entry.tmuxSession || null,
+          cwd: entry.cwd || null,
+          sleeping: !!entry.sleeping,
+          paused: !!entry.paused,
+          createdAt: entry.createdAt || null,
+        }));
+    }
+  } catch { /* ignore read errors */ }
+
+  // JSON output mode
+  if (jsonMode) {
+    const now = Date.now();
+    const jsonAccounts = withUsage.map(a => ({
+      name: a.name,
+      profile: profileMap[a.name] || null,
+      usage: a.usage,
+      score: a.usage?.error ? null : Number(effectiveScore(a.usage, now).toFixed(1)),
+    }));
+    for (const a of unauthenticated) {
+      jsonAccounts.push({ name: a.name, profile: null, usage: null, score: null, error: 'not authenticated' });
+    }
+    console.log(JSON.stringify({ accounts: jsonAccounts, sessions }, null, 2));
+    return;
+  }
+
+  // Human-readable output
+  const best = pickBestAccount(withUsage);
+  const bestName = best?.account?.name;
+  const now = Date.now();
+
+  if (withUsage.length > 0 || unauthenticated.length > 0) {
+    console.log('Accounts:');
 
     for (const account of withUsage) {
       const isBest = account.name === bestName;
-      const marker = isBest ? ' <-- best' : '';
+      const marker = isBest ? '  \u25C4 best' : '';
+      const bullet = isBest ? '\u25CF' : '\u25CB';
       const userInfo = formatUserInfo(profileMap[account.name] || {});
 
-      console.log(`  ${account.name}${userInfo}${marker}`);
+      console.log(`  ${bullet} ${account.name}${userInfo}${marker}`);
 
       if (account.usage.error) {
-        console.log(`    Usage: error (${account.usage.error})`);
+        console.log(`    error: ${account.usage.error}`);
       } else {
-        const sessionBar = makeBar(account.usage.sessionPercent);
-        const weeklyBar = makeBar(account.usage.weeklyPercent);
-        console.log(`    5-hour:  ${sessionBar} ${account.usage.sessionPercent}%`);
-        console.log(`    7-day:   ${weeklyBar} ${account.usage.weeklyPercent}%`);
+        const sessionScore = (account.usage.sessionPercent * (account.usage.sessionResetsAt
+          ? Math.min((new Date(account.usage.sessionResetsAt).getTime() - now) / (5 * 60 * 60 * 1000), 1)
+          : 1)).toFixed(0);
+        const weeklyScore = (account.usage.weeklyPercent * (account.usage.weeklyResetsAt
+          ? Math.min((new Date(account.usage.weeklyResetsAt).getTime() - now) / (7 * 24 * 60 * 60 * 1000), 1)
+          : 1)).toFixed(0);
+        const totalScore = effectiveScore(account.usage, now).toFixed(1);
 
-        if (account.usage.sessionResetsAt) {
-          console.log(`    Session resets: ${formatResetTime(account.usage.sessionResetsAt)}`);
-        }
-        if (account.usage.weeklyResetsAt) {
-          console.log(`    Weekly resets:  ${formatResetTime(account.usage.weeklyResetsAt)}`);
-        }
+        const sessionBar = makeBar(account.usage.sessionPercent, 12);
+        const weeklyBar = makeBar(account.usage.weeklyPercent, 12);
+        const sessionReset = account.usage.sessionResetsAt ? `  resets ${formatResetTime(account.usage.sessionResetsAt)}` : '';
+        const weeklyReset = account.usage.weeklyResetsAt ? `  resets ${formatResetTime(account.usage.weeklyResetsAt)}` : '';
+
+        console.log(`    5-hour:  ${sessionBar} ${String(account.usage.sessionPercent).padStart(3)}%${sessionReset}  (score: ${sessionScore})`);
+        console.log(`    7-day:   ${weeklyBar} ${String(account.usage.weeklyPercent).padStart(3)}%${weeklyReset}  (score: ${weeklyScore})`);
+        console.log(`    effective score: ${totalScore}`);
       }
+      console.log('');
+    }
+
+    for (const account of unauthenticated) {
+      console.log(`  \u25CB ${account.name} (not authenticated)`);
       console.log('');
     }
   }
 
-  if (unauthenticated.length > 0) {
-    console.log('  Not authenticated:');
-    for (const account of unauthenticated) {
-      console.log(`    ${account.name} (${account.configDir})`);
+  // Show active sessions
+  if (sessions.length > 0) {
+    console.log('Sessions:');
+    for (const s of sessions) {
+      const status = s.sleeping ? 'sleeping' : s.paused ? 'paused' : 'running';
+      const channel = s.channelName ? `#${s.channelName}` : '';
+      const project = s.cwd ? s.cwd.split('/').pop() : '';
+      console.log(`  ${project.padEnd(16)} ${channel.padEnd(30)} ${status}`);
     }
     console.log('');
   }
+}
+
+async function cmdChannels(args = []) {
+  const cleanup = args.includes('--cleanup');
+  const channelMapPath = join(CONFIG_DIR, 'data', 'channel-map.json');
+
+  if (!existsSync(channelMapPath)) {
+    console.log('No channel mappings found.');
+    return;
+  }
+
+  let map;
+  try {
+    const raw = readFileSync(channelMapPath, 'utf8');
+    map = JSON.parse(raw || '{}');
+  } catch {
+    console.log('Could not read channel-map.json.');
+    return;
+  }
+
+  const entries = Object.entries(map);
+  if (entries.length === 0) {
+    console.log('No channel mappings found.');
+    return;
+  }
+
+  if (!cleanup) {
+    // List all channels with status
+    console.log('Mapped channels:\n');
+    for (const [, entry] of entries) {
+      const status = entry.active ? '\x1b[32mactive\x1b[0m' :
+        entry.archivedAt ? '\x1b[90marchived\x1b[0m' : '\x1b[33minactive\x1b[0m';
+      const channel = entry.channelName ? `#${entry.channelName}` : entry.channelId || 'unknown';
+      const project = entry.cwd ? entry.cwd.split('/').pop() : '';
+      const age = entry.createdAt ? formatResetTime(entry.createdAt).replace('in ', '') + ' ago' : '';
+      console.log(`  ${channel.padEnd(35)} ${status.padEnd(20)} ${project.padEnd(20)} ${age}`);
+    }
+    console.log(`\n  Total: ${entries.length} (${entries.filter(([, e]) => e.active).length} active)`);
+    return;
+  }
+
+  // Cleanup mode: archive stale channels and purge entries
+  console.log('Cleaning up stale channels...\n');
+
+  // Use createRequire to import the CJS channel-manager
+  const { createRequire } = await import('node:module');
+  const require = createRequire(import.meta.url);
+  // Check for Slack tokens
+  const envPath = join(CONFIG_DIR, '.env');
+  if (!existsSync(envPath)) {
+    console.log('No .env file found. Run "claude-nonstop setup" first.');
+    return;
+  }
+
+  // Load env and create channel manager
+  require('../remote/load-env.cjs');
+  const SlackChannelManager = require('../remote/channel-manager.cjs');
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (!botToken) {
+    console.log('SLACK_BOT_TOKEN not found in .env. Run "claude-nonstop setup" first.');
+    return;
+  }
+
+  const manager = new SlackChannelManager({ botToken });
+  const result = await manager.cleanupStaleChannels();
+  console.log(`  Archived: ${result.archived} Slack channels`);
+  console.log(`  Purged:   ${result.purged} map entries`);
 }
 
 async function cmdRun(claudeArgs) {
@@ -611,7 +746,7 @@ async function cmdSetup(setupArgs = []) {
 
   const { flags, fromEnv } = parseSetupFlags(setupArgs);
 
-  let botToken, appToken, channelId, allowedUsers, inviteUserId, channelPrefix, defaultTmux;
+  let botToken, appToken, channelId, allowedUsers, inviteUserId, channelPrefix, defaultTmux, geminiKey;
 
   if (fromEnv || (flags.botToken && flags.appToken)) {
     // Non-interactive mode: read from env vars and/or CLI flags
@@ -623,6 +758,7 @@ async function cmdSetup(setupArgs = []) {
       inviteUserId = flags.inviteUserId || process.env.SLACK_INVITE_USER_ID || '';
       channelPrefix = flags.channelPrefix || process.env.SLACK_CHANNEL_PREFIX || 'cn';
       defaultTmux = flags.defaultTmuxSession || process.env.DEFAULT_TMUX_SESSION || '';
+      geminiKey = flags.geminiKey || process.env.GEMINI_API_KEY || '';
       console.log('Reading configuration from environment variables...');
     } else {
       botToken = flags.botToken;
@@ -632,6 +768,7 @@ async function cmdSetup(setupArgs = []) {
       inviteUserId = flags.inviteUserId || '';
       channelPrefix = flags.channelPrefix || 'cn';
       defaultTmux = flags.defaultTmuxSession || '';
+      geminiKey = flags.geminiKey || '';
       console.log('Using tokens from CLI flags...');
     }
   } else {
@@ -654,6 +791,10 @@ async function cmdSetup(setupArgs = []) {
     channelPrefix = await ask('SLACK_CHANNEL_PREFIX', 'cn');
     defaultTmux = await ask('DEFAULT_TMUX_SESSION (for single-channel/DM mode, optional)', '');
 
+    console.log('\nOptional: Gemini API key for AI-powered channel naming.');
+    console.log('Get one free at https://aistudio.google.com/apikey');
+    geminiKey = await ask('GEMINI_API_KEY (optional, press Enter to skip)', '');
+
     rl.close();
   }
 
@@ -668,6 +809,32 @@ async function cmdSetup(setupArgs = []) {
     process.exit(1);
   }
 
+  // Validate Gemini API key if provided
+  if (geminiKey) {
+    console.log('\nValidating Gemini API key...');
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Say "ok"' }] }] }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        console.log('  Gemini API key is valid.');
+      } else {
+        console.warn(`  Warning: Gemini API returned ${res.status}. Key may be invalid.`);
+        console.warn('  Channel naming will fall back to text-based slugs.');
+      }
+    } catch {
+      console.warn('  Warning: Could not validate Gemini API key (network error).');
+      console.warn('  Channel naming will fall back to text-based slugs.');
+    }
+  }
+
   // Write .env
   const envContent = `# claude-nonstop Slack Configuration
 SLACK_BOT_TOKEN=${botToken}
@@ -677,6 +844,7 @@ SLACK_ALLOWED_USERS=${allowedUsers}
 SLACK_INVITE_USER_ID=${inviteUserId}
 SLACK_CHANNEL_PREFIX=${channelPrefix}
 DEFAULT_TMUX_SESSION=${defaultTmux}
+GEMINI_API_KEY=${geminiKey || ''}
 `;
 
   const envDir = CONFIG_DIR;
@@ -1192,6 +1360,7 @@ function parseSetupFlags(args) {
     '--invite-user-id': 'inviteUserId',
     '--channel-prefix': 'channelPrefix',
     '--default-tmux-session': 'defaultTmuxSession',
+    '--gemini-key': 'geminiKey',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -1257,7 +1426,9 @@ Commands:
   remove <name>        Remove a registered account
   reauth               Re-authenticate accounts with expired tokens
   list                 List all accounts with auth status
-  status               Show detailed usage for all accounts
+  status [--json]      Show detailed usage, scores, and sessions
+  channels             List all mapped Slack channels with status
+  channels --cleanup   Archive stale Slack channels and purge map entries
   setup [flags]        Slack remote access setup (interactive or via flags/env)
   webhook              Show webhook subcommands
   webhook start        Start the Slack webhook in foreground (for debugging)
