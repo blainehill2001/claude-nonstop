@@ -133,6 +133,7 @@ These are **hard rules**. Do not relax them.
 | `account-switch` | runner.js (on rate limit) | Notify about account switch |
 | `sleep-until-reset` | runner.js (all accounts exhausted) | Notify sleeping until rate limit reset |
 | `sleep-wake` | runner.js (after sleep) | Notify resuming after sleep |
+| `output` | runner.js (5s timer + hook flush) | Forward buffered terminal output to Slack |
 
 ## Slack Control Commands
 

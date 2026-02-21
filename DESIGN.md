@@ -77,12 +77,15 @@ Short-lived processes spawned by Claude Code itself on lifecycle events (Session
 3. Claude Code starts, fires `SessionStart` hook -> `hook-notify.cjs session-start`
 4. Hook reads stdin for `session_id`, creates Slack channel via `conversations.create`
 5. Hook writes `{sessionId -> {channelId, tmuxSession, ...}}` to `channel-map.json`
-6. Claude completes work -> `Stop` hook fires -> `hook-notify.cjs completed`
-7. Hook reads last assistant message from transcript `.jsonl`, posts to session's Slack channel
-8. User replies in Slack channel -> webhook receives message via Socket Mode
-9. Webhook looks up `channel-map.json` by `channelId` to find `tmuxSession`
-10. Webhook sends text to tmux via `tmux send-keys -l` (literal) + `tmux send-keys Enter`
-11. Claude receives input, processes, fires Stop hook again -> cycle continues
+6. Runner's `child.onData()` buffers stripped PTY output to `output-buffer-{sessionId}.txt`
+7. Every 5s, runner flushes buffer to Slack via `hook-notify.cjs output`
+8. When hooks fire (tool-use, waiting-for-input), they flush buffer first for chronological order
+9. Claude completes work -> `Stop` hook fires -> `hook-notify.cjs completed`
+10. Hook reads last assistant message from transcript `.jsonl`, posts to session's Slack channel
+11. User replies in Slack channel -> webhook receives message via Socket Mode
+12. Webhook looks up `channel-map.json` by `channelId` to find `tmuxSession`
+13. Webhook sends text to tmux via `tmux send-keys -l` (literal) + `tmux send-keys Enter`
+14. Claude receives input, processes, fires Stop hook again -> cycle continues
 
 ## Security Model
 
