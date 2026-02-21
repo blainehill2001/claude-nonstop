@@ -788,7 +788,7 @@ async function cmdSetup(setupArgs = []) {
       channelId = flags.channelId || process.env.SLACK_CHANNEL_ID || '';
       allowedUsers = flags.allowedUsers || process.env.SLACK_ALLOWED_USERS || '';
       inviteUserId = flags.inviteUserId || process.env.SLACK_INVITE_USER_ID || '';
-      channelPrefix = flags.channelPrefix || process.env.SLACK_CHANNEL_PREFIX || 'cn';
+      channelPrefix = flags.channelPrefix ?? process.env.SLACK_CHANNEL_PREFIX ?? '';
       defaultTmux = flags.defaultTmuxSession || process.env.DEFAULT_TMUX_SESSION || '';
       geminiKey = flags.geminiKey || process.env.GEMINI_API_KEY || '';
       console.log('Reading configuration from environment variables...');
@@ -798,7 +798,7 @@ async function cmdSetup(setupArgs = []) {
       channelId = flags.channelId || '';
       allowedUsers = flags.allowedUsers || '';
       inviteUserId = flags.inviteUserId || '';
-      channelPrefix = flags.channelPrefix || 'cn';
+      channelPrefix = flags.channelPrefix ?? '';
       defaultTmux = flags.defaultTmuxSession || '';
       geminiKey = flags.geminiKey || '';
       console.log('Using tokens from CLI flags...');
@@ -820,7 +820,7 @@ async function cmdSetup(setupArgs = []) {
     channelId = await ask('SLACK_CHANNEL_ID (optional, for single-channel mode)', '');
     allowedUsers = await ask('SLACK_ALLOWED_USERS (comma-separated user IDs, empty = all)', '');
     inviteUserId = await ask('SLACK_INVITE_USER_ID (auto-invite to session channels)', '');
-    channelPrefix = await ask('SLACK_CHANNEL_PREFIX', 'cn');
+    channelPrefix = await ask('SLACK_CHANNEL_PREFIX (empty = no prefix)', '');
     defaultTmux = await ask('DEFAULT_TMUX_SESSION (for single-channel/DM mode, optional)', '');
 
     console.log('\nOptional: Gemini API key for AI-powered channel naming.');

@@ -28,7 +28,7 @@ class SlackChannelManager {
     constructor(config = {}) {
         this.client = new WebClient(config.botToken);
         this.inviteUserId = config.inviteUserId || process.env.SLACK_INVITE_USER_ID;
-        this.channelPrefix = config.channelPrefix || process.env.SLACK_CHANNEL_PREFIX || 'cn';
+        this.channelPrefix = config.channelPrefix ?? process.env.SLACK_CHANNEL_PREFIX ?? '';
         this.channelMapPath = config.channelMapPath || CHANNEL_MAP_PATH;
 
         // One-time migration from legacy location
@@ -62,7 +62,8 @@ class SlackChannelManager {
             .replace(/[^a-z0-9_-]/g, '-')
             .replace(/-+/g, '-')
             .replace(/^-|-$/g, '');
-        const name = `${this.channelPrefix}-${safeProject}-${timestamp}`;
+        const prefix = this.channelPrefix;
+        const name = prefix ? `${prefix}-${safeProject}-${timestamp}` : `${safeProject}-${timestamp}`;
         return name.substring(0, 80);
     }
     _readChannelMap() {

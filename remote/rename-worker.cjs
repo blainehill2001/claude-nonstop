@@ -31,7 +31,7 @@ async function main() {
     const manager = new SlackChannelManager({
         botToken,
         inviteUserId: process.env.SLACK_INVITE_USER_ID,
-        channelPrefix: channelPrefix || 'cn',
+        channelPrefix: channelPrefix ?? '',
     });
 
     const mapping = manager.getChannelMapping(sessionId);
@@ -55,7 +55,8 @@ async function main() {
         const safeProject = mapping.project
             ? generateSlugName(mapping.project) + '-'
             : '';
-        const newName = `${channelPrefix || 'cn'}-${safeProject}${slug}`
+        const prefix = channelPrefix || '';
+        const newName = (prefix ? `${prefix}-${safeProject}${slug}` : `${safeProject}${slug}`)
             .substring(0, 80)
             .replace(/-$/, '');
 

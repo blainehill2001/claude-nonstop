@@ -100,6 +100,19 @@ describe('SlackChannelManager._generateChannelName', () => {
     const name = manager._generateChannelName('a--b');
     assert.ok(name.startsWith('cn-a-b-'));
   });
+
+  it('generates name without prefix when channelPrefix is empty', () => {
+    const { client: c2 } = createMockSlackClient();
+    const m2 = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: path.join(tempDir, 'data', 'channel-map.json'),
+      channelPrefix: '',
+    });
+    m2.client = c2;
+    const name = m2._generateChannelName('myproject');
+    assert.ok(name.match(/^myproject-[a-z]{3}\d{2}-\d{4}$/), `unexpected format: ${name}`);
+    assert.ok(!name.startsWith('-'), 'should not start with hyphen');
+  });
 });
 
 describe('SlackChannelManager._readChannelMap', () => {

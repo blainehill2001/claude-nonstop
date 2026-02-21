@@ -194,7 +194,7 @@ function createChannelManager() {
     return new SlackChannelManager({
         botToken: process.env.SLACK_BOT_TOKEN,
         inviteUserId: process.env.SLACK_INVITE_USER_ID,
-        channelPrefix: process.env.SLACK_CHANNEL_PREFIX || 'cn'
+        channelPrefix: process.env.SLACK_CHANNEL_PREFIX ?? ''
     });
 }
 
@@ -490,7 +490,7 @@ function spawnRenameWorker(sessionId, userPrompt, channelPrefix) {
         delete env.CLAUDE_CODE_ENTRYPOINT;
         delete env.CLAUDE_REMOTE_ACCESS;
 
-        const child = spawnChild('node', [RENAME_WORKER_PATH, sessionId, userPrompt, channelPrefix || 'cn'], {
+        const child = spawnChild('node', [RENAME_WORKER_PATH, sessionId, userPrompt, channelPrefix ?? ''], {
             detached: true,
             stdio: 'ignore',
             env,
