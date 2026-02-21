@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { stripAnsi, extractResumeSessionId, buildResumeArgs, deactivateStaleChannels } from '../../../lib/runner.js';
+import { stripAnsi, extractResumeSessionId, buildResumeArgs, deactivateStaleChannels, writeOutputBuffer, readOutputBuffer, readSignalCounter, writeSignalCounter, OUTPUT_FLUSH_INTERVAL_MS } from '../../../lib/runner.js';
 import { createTempDir, removeTempDir } from '../../helpers/temp-dir.js';
 
 describe('stripAnsi', () => {
@@ -361,5 +361,106 @@ describe('deactivateStaleChannels', () => {
     const result = JSON.parse(fs.readFileSync(channelMapPath, 'utf8'));
     assert.equal(result['term1-session'].active, false);
     assert.equal(result['other-project-session'].active, true);
+  });
+});
+
+describe('writeOutputBuffer', () => {
+  let tmpDir;
+  beforeEach(() => { tmpDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tmpDir); });
+
+  it('appends text to buffer file', () => {
+    const bufPath = path.join(tmpDir, 'output.txt');
+    writeOutputBuffer(bufPath, 'first');
+    writeOutputBuffer(bufPath, ' second');
+    assert.equal(fs.readFileSync(bufPath, 'utf8'), 'first second');
+  });
+
+  it('creates parent directory if needed', () => {
+    const bufPath = path.join(tmpDir, 'sub', 'output.txt');
+    writeOutputBuffer(bufPath, 'hello');
+    assert.equal(fs.readFileSync(bufPath, 'utf8'), 'hello');
+  });
+
+  it('handles empty string (no-op)', () => {
+    const bufPath = path.join(tmpDir, 'output.txt');
+    writeOutputBuffer(bufPath, '');
+    assert.equal(fs.existsSync(bufPath), false);
+  });
+});
+
+describe('readOutputBuffer', () => {
+  let tmpDir;
+  beforeEach(() => { tmpDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tmpDir); });
+
+  it('returns buffer content and clears file', () => {
+    const bufPath = path.join(tmpDir, 'output.txt');
+    fs.writeFileSync(bufPath, 'hello world');
+    const content = readOutputBuffer(bufPath);
+    assert.equal(content, 'hello world');
+    assert.equal(fs.readFileSync(bufPath, 'utf8'), '');
+  });
+
+  it('returns null for non-existent file', () => {
+    assert.equal(readOutputBuffer(path.join(tmpDir, 'nope.txt')), null);
+  });
+
+  it('returns null for empty file', () => {
+    const bufPath = path.join(tmpDir, 'empty.txt');
+    fs.writeFileSync(bufPath, '');
+    assert.equal(readOutputBuffer(bufPath), null);
+  });
+
+  it('returns null for whitespace-only file', () => {
+    const bufPath = path.join(tmpDir, 'ws.txt');
+    fs.writeFileSync(bufPath, '  \n  ');
+    assert.equal(readOutputBuffer(bufPath), null);
+  });
+});
+
+describe('readSignalCounter', () => {
+  let tmpDir;
+  beforeEach(() => { tmpDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tmpDir); });
+
+  it('returns counter value from file', () => {
+    const sigPath = path.join(tmpDir, 'signal.counter');
+    fs.writeFileSync(sigPath, '5');
+    assert.equal(readSignalCounter(sigPath), 5);
+  });
+
+  it('returns 0 for non-existent file', () => {
+    assert.equal(readSignalCounter(path.join(tmpDir, 'nope.counter')), 0);
+  });
+
+  it('returns 0 for invalid content', () => {
+    const sigPath = path.join(tmpDir, 'bad.counter');
+    fs.writeFileSync(sigPath, 'not-a-number');
+    assert.equal(readSignalCounter(sigPath), 0);
+  });
+});
+
+describe('writeSignalCounter', () => {
+  let tmpDir;
+  beforeEach(() => { tmpDir = createTempDir(); });
+  afterEach(() => { removeTempDir(tmpDir); });
+
+  it('writes counter value to file', () => {
+    const sigPath = path.join(tmpDir, 'signal.counter');
+    writeSignalCounter(sigPath, 7);
+    assert.equal(fs.readFileSync(sigPath, 'utf8'), '7');
+  });
+
+  it('creates parent directory if needed', () => {
+    const sigPath = path.join(tmpDir, 'sub', 'signal.counter');
+    writeSignalCounter(sigPath, 1);
+    assert.equal(fs.readFileSync(sigPath, 'utf8'), '1');
+  });
+});
+
+describe('OUTPUT_FLUSH_INTERVAL_MS', () => {
+  it('is 5 seconds', () => {
+    assert.equal(OUTPUT_FLUSH_INTERVAL_MS, 5000);
   });
 });
