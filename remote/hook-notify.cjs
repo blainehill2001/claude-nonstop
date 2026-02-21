@@ -8,7 +8,7 @@
  * Notification types:
  *   session-start      — Create per-session Slack channel (Claude Code hook)
  *   completed          — Post structured completion message (Claude Code hook)
- *   tool-use           — Buffer tool activity, flush to Slack every 10s (Claude Code PostToolUse hook)
+ *   tool-use           — Buffer tool activity, flush to Slack every 3s (Claude Code PostToolUse hook)
  *   waiting-for-input  — Notify when Claude is waiting for user input (Claude Code PreToolUse hook)
  *   account-switch     — Notify about rate limit account switch (runner.js)
  *   sleep-until-reset  — Notify that all accounts are near-exhausted, sleeping until reset (runner.js)
@@ -29,7 +29,7 @@ require('./load-env.cjs');
 
 const SlackChannelManager = require('./channel-manager.cjs');
 const { markdownToMrkdwn } = SlackChannelManager;
-const { PROGRESS_DIR } = require('./paths.cjs');
+const { PROGRESS_DIR, expandPath } = require('./paths.cjs');
 
 // ─── Progress Buffer Constants ──────────────────────────────────────────────
 
@@ -160,9 +160,7 @@ function findTranscriptPath(sessionId, cwd) {
     const configDir = process.env.CLAUDE_CONFIG_DIR;
     if (!configDir || !sessionId || !cwd) return null;
 
-    const expandedConfigDir = configDir.startsWith('~')
-        ? configDir.replace(/^~/, require('os').homedir())
-        : configDir;
+    const expandedConfigDir = expandPath(configDir);
     const cwdHash = cwd.replace(/\//g, '-');
     const transcriptPath = path.join(expandedConfigDir, 'projects', cwdHash, `${sessionId}.jsonl`);
 
@@ -307,22 +305,6 @@ function buildApprovalButtons(toolName, toolInput) {
         return [{ type: 'actions', elements }];
     }
     return null;
-}
-
-/**
- * Build Block Kit control buttons for session management.
- */
-function buildControlButtons() {
-    return [
-        {
-            type: 'actions',
-            elements: [
-                { type: 'button', text: { type: 'plain_text', text: 'Stop' }, action_id: 'cn_stop', style: 'danger' },
-                { type: 'button', text: { type: 'plain_text', text: 'Pause' }, action_id: 'cn_pause' },
-                { type: 'button', text: { type: 'plain_text', text: 'Archive' }, action_id: 'cn_archive' },
-            ],
-        },
-    ];
 }
 
 /**
@@ -875,5 +857,5 @@ module.exports = {
     // Countdown worker
     spawnCountdownWorker, COUNTDOWN_WORKER_PATH,
     // Button builders
-    buildApprovalButtons, buildControlButtons,
+    buildApprovalButtons,
 };

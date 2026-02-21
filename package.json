@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check": "node --check lib/*.js && node --check remote/*.cjs && node --check bin/claude-nonstop.js && node --check scripts/postinstall.js",
-    "test": "node --experimental-test-module-mocks --test 'test/unit/**/*.test.js' 'test/unit/**/*.test.cjs'",
+    "test": "node --experimental-test-module-mocks --test 'test/unit/**/*.test.js' 'test/unit/**/*.test.cjs' 'test/security/**/*.test.js' 'test/security/**/*.test.cjs'",
     "test:integration": "node --experimental-test-module-mocks --test 'test/integration/**/*.test.js'",
     "test:security": "node --experimental-test-module-mocks --test 'test/security/**/*.test.js'",
     "test:all": "node --experimental-test-module-mocks --test 'test/**/*.test.js' 'test/**/*.test.cjs'",

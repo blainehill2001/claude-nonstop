@@ -428,13 +428,15 @@ class SlackChannelManager {
             }
         }
 
-        for (const [, entry] of Object.entries(map)) {
+        // Re-read map after API calls to avoid clobbering concurrent writes
+        const freshMap = this._readChannelMap();
+        for (const [, entry] of Object.entries(freshMap)) {
             if (entry.channelId === channelId && entry.active) {
                 entry.pendingMessageTs = messageTs;
                 break;
             }
         }
-        this._writeChannelMap(map);
+        this._writeChannelMap(freshMap);
     }
 
     async clearTypingIndicator(sessionId) {
@@ -577,6 +579,7 @@ class SlackChannelManager {
             }
         }
 
+        // Re-read map after API call to avoid clobbering concurrent writes
         const map = this._readChannelMap();
         for (const [sessionId, entry] of Object.entries(map)) {
             if (entry.channelId === channelId) {

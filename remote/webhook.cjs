@@ -9,7 +9,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const SlackChannelManager = require('./channel-manager.cjs');
-const { enqueueMessage } = require('./channel-manager.cjs');
+const { enqueueMessage } = SlackChannelManager;
 
 class SlackWebhook {
     constructor(config = {}) {
@@ -23,7 +23,7 @@ class SlackWebhook {
             this._channelManager = new SlackChannelManager({
                 botToken: this.config.botToken,
                 inviteUserId: process.env.SLACK_INVITE_USER_ID,
-                channelPrefix: process.env.SLACK_CHANNEL_PREFIX || 'cn'
+                channelPrefix: process.env.SLACK_CHANNEL_PREFIX ?? ''
             });
         }
         return this._channelManager;
@@ -55,7 +55,7 @@ class SlackWebhook {
 
             const text = message.text?.trim() || '';
             if (!text) return;
-            console.log('Received message:', text);
+            console.log(`Received message in channel ${message.channel} (${text.length} chars)`);
 
             // Per-session channel handling
             const channelManager = this._getChannelManager();
@@ -180,7 +180,7 @@ class SlackWebhook {
         // Handle app mentions
         this.app.event('app_mention', async ({ event, say }) => {
           try {
-            console.log('Received app_mention:', event.text);
+            console.log(`Received app_mention in channel ${event.channel} (${(event.text || '').length} chars)`);
             const text = event.text.replace(/<@[A-Z0-9]+>/gi, '').trim();
             if (!text) return;
 

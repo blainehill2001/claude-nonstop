@@ -11,7 +11,7 @@ const {
   FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS, USER_RESPONSE_TOOLS,
   formatUserResponse,
   generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
-  buildApprovalButtons, buildControlButtons,
+  buildApprovalButtons,
 } = require('../../../remote/hook-notify.cjs');
 
 const FIXTURES_DIR = path.join(__dirname, '..', '..', 'fixtures', 'transcripts');
@@ -1304,29 +1304,3 @@ describe('buildApprovalButtons', () => {
   });
 });
 
-describe('buildControlButtons', () => {
-  it('returns actions block with Stop, Pause, Archive', () => {
-    const blocks = buildControlButtons();
-    assert.ok(blocks);
-    assert.equal(blocks.length, 1);
-    assert.equal(blocks[0].type, 'actions');
-    const labels = blocks[0].elements.map(e => e.text.text);
-    assert.ok(labels.includes('Stop'));
-    assert.ok(labels.includes('Pause'));
-    assert.ok(labels.includes('Archive'));
-  });
-
-  it('Stop button has danger style', () => {
-    const blocks = buildControlButtons();
-    const stop = blocks[0].elements.find(e => e.text.text === 'Stop');
-    assert.equal(stop.style, 'danger');
-  });
-
-  it('has correct action_ids', () => {
-    const blocks = buildControlButtons();
-    const ids = blocks[0].elements.map(e => e.action_id);
-    assert.ok(ids.includes('cn_stop'));
-    assert.ok(ids.includes('cn_pause'));
-    assert.ok(ids.includes('cn_archive'));
-  });
-});

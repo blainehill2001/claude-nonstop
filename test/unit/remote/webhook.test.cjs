@@ -38,7 +38,7 @@ describe('SlackWebhook._executeTmuxCommand', () => {
   // _executeTmuxCommand uses async execFile('tmux', ...) which may not be available.
   // We test error handling when tmux is not running.
 
-  it('truncates messages exceeding 4096 chars', async () => {
+  it('handles messages exceeding 4096 chars without crashing', async () => {
     const webhook = new SlackWebhook({ botToken: 'x', appToken: 'x' });
     const longMessage = 'x'.repeat(5000);
 

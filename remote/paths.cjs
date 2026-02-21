@@ -16,4 +16,11 @@ const LOG_PATH = path.join(LOG_DIR, 'webhook.log');
 
 const MESSAGE_QUEUE_PATH = path.join(DATA_DIR, 'message-queue.json');
 
-module.exports = { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, PROGRESS_DIR, LOG_DIR, LOG_PATH, MESSAGE_QUEUE_PATH };
+/**
+ * Expand ~ to homedir in a path string.
+ */
+function expandPath(p) {
+  return p.startsWith('~') ? p.replace(/^~/, os.homedir()) : p;
+}
+
+module.exports = { CONFIG_DIR, ENV_PATH, DATA_DIR, CHANNEL_MAP_PATH, PROGRESS_DIR, LOG_DIR, LOG_PATH, MESSAGE_QUEUE_PATH, expandPath };

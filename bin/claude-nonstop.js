@@ -47,10 +47,10 @@ const PROJECT_ROOT = join(__dirname, '..');
 const args = process.argv.slice(2);
 const command = args[0];
 
-// Auto-detect default account once at startup
-ensureDefaultAccount();
-
 try {
+  // Auto-detect default account once at startup
+  ensureDefaultAccount();
+
   switch (command) {
     case 'add':
       await cmdAdd(args.slice(1));
@@ -612,46 +612,17 @@ async function cmdChannels(args = []) {
 }
 
 async function cmdRun(claudeArgs) {
-  // Remote access is on by default; --no-remote-access disables it
-  const noRemoteIdx = claudeArgs.indexOf('--no-remote-access');
-  let remoteAccess = noRemoteIdx === -1;
-  if (noRemoteIdx !== -1) {
-    claudeArgs.splice(noRemoteIdx, 1);
-  }
-  // Also accept legacy --remote-access flag (no-op, already default)
-  const legacyIdx = claudeArgs.indexOf('--remote-access');
-  if (legacyIdx !== -1) {
-    claudeArgs.splice(legacyIdx, 1);
-  }
-
-  // Extract --dangerously-skip-permissions (consume it, re-add to claude args later)
-  const skipPermsIdx = claudeArgs.indexOf('--dangerously-skip-permissions');
-  const skipPermissions = skipPermsIdx !== -1;
-  if (skipPermsIdx !== -1) {
-    claudeArgs.splice(skipPermsIdx, 1);
-  }
-
-  // Extract --account / -a flag (consume it, don't pass to claude)
-  const requestedAccount = extractAccountFlag(claudeArgs);
+  const { remoteAccess, skipPermissions, requestedAccount } = parseCommonFlags(claudeArgs);
 
   // Handle tmux bootstrapping for remote access
-  if (remoteAccess) {
-    const { isInsideTmux, generateSessionName, reexecInTmux } = await import('../lib/tmux.js');
+  if (await bootstrapTmux(remoteAccess)) return;
 
-    if (!isInsideTmux()) {
-      const sessionName = generateSessionName();
-      console.error(`[claude-nonstop] Creating tmux session "${sessionName}"...`);
-      reexecInTmux(sessionName, process.argv);
-      return;
-    }
-
-    // Append formatting instruction for Slack readability
-    if (!claudeArgs.includes('--append-system-prompt')) {
-      claudeArgs.push(
-        '--append-system-prompt',
-        'Your responses are relayed to a Slack channel. Structure output for readability: use short paragraphs, bullet points, and bold headers (## Header). Separate sections with blank lines. Keep summaries concise — prefer a few clear bullets over long prose.'
-      );
-    }
+  // Append formatting instruction for Slack readability (cmdRun only)
+  if (remoteAccess && !claudeArgs.includes('--append-system-prompt')) {
+    claudeArgs.push(
+      '--append-system-prompt',
+      'Your responses are relayed to a Slack channel. Structure output for readability: use short paragraphs, bullet points, and bold headers (## Header). Separate sections with blank lines. Keep summaries concise — prefer a few clear bullets over long prose.'
+    );
   }
 
   // Add --dangerously-skip-permissions to claude args if requested
@@ -677,39 +648,10 @@ async function cmdRun(claudeArgs) {
 }
 
 async function cmdResume(resumeArgs) {
-  // Remote access is on by default; --no-remote-access disables it
-  const noRemoteIdx = resumeArgs.indexOf('--no-remote-access');
-  let remoteAccess = noRemoteIdx === -1;
-  if (noRemoteIdx !== -1) {
-    resumeArgs.splice(noRemoteIdx, 1);
-  }
-  // Also accept legacy --remote-access flag (no-op, already default)
-  const legacyIdx = resumeArgs.indexOf('--remote-access');
-  if (legacyIdx !== -1) {
-    resumeArgs.splice(legacyIdx, 1);
-  }
-
-  // Extract --dangerously-skip-permissions
-  const skipPermsIdx = resumeArgs.indexOf('--dangerously-skip-permissions');
-  const skipPermissions = skipPermsIdx !== -1;
-  if (skipPermsIdx !== -1) {
-    resumeArgs.splice(skipPermsIdx, 1);
-  }
-
-  // Extract --account / -a flag (consume it, don't pass to claude)
-  const requestedAccount = extractAccountFlag(resumeArgs);
+  const { remoteAccess, skipPermissions, requestedAccount } = parseCommonFlags(resumeArgs);
 
   // Handle tmux bootstrapping for remote access
-  if (remoteAccess) {
-    const { isInsideTmux, generateSessionName, reexecInTmux } = await import('../lib/tmux.js');
-
-    if (!isInsideTmux()) {
-      const sessionName = generateSessionName();
-      console.error(`[claude-nonstop] Creating tmux session "${sessionName}"...`);
-      reexecInTmux(sessionName, process.argv);
-      return;
-    }
-  }
+  if (await bootstrapTmux(remoteAccess)) return;
 
   const accounts = getAccounts();
   if (accounts.length === 0) {
@@ -1153,9 +1095,9 @@ function installHooksToAllProfiles() {
       if (hookType === 'PostToolUse') {
         hookEntry.timeout = 15;
       }
-      // PreToolUse for waiting-for-input: 30s to allow 15s delay + Slack API calls
+      // PreToolUse for waiting-for-input: 45s to allow 15s delay + Slack API calls + margin
       if (hookType === 'PreToolUse') {
-        hookEntry.timeout = 30;
+        hookEntry.timeout = 45;
       }
       // UserPromptSubmit posts user's terminal input to Slack
       if (hookType === 'UserPromptSubmit') {
@@ -1333,47 +1275,54 @@ function removeHooksFromAllProfiles() {
   for (const settingsPath of settingsPaths) {
     if (!existsSync(settingsPath)) continue;
 
+    let settings;
     try {
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      if (!settings.hooks) continue;
+      settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    } catch {
+      // Skip files we can't parse
+      continue;
+    }
 
-      let modified = false;
-      for (const hookType of ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit']) {
-        if (!settings.hooks[hookType]) continue;
+    if (!settings.hooks) continue;
 
-        const filtered = settings.hooks[hookType].filter(m => {
-          if (!m.hooks) return true;
-          const isOurHook = m.hooks.every(h =>
-            h.command?.includes('hook-notify.cjs')
-          );
-          return !isOurHook;
-        });
+    let modified = false;
+    for (const hookType of ['Stop', 'SessionStart', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit']) {
+      if (!settings.hooks[hookType]) continue;
 
-        if (filtered.length !== settings.hooks[hookType].length) {
-          settings.hooks[hookType] = filtered;
-          modified = true;
-        }
+      const filtered = settings.hooks[hookType].filter(m => {
+        if (!m.hooks) return true;
+        const isOurHook = m.hooks.every(h =>
+          h.command?.includes('hook-notify.cjs')
+        );
+        return !isOurHook;
+      });
 
-        // Remove empty hook arrays
-        if (settings.hooks[hookType].length === 0) {
-          delete settings.hooks[hookType];
-        }
+      if (filtered.length !== settings.hooks[hookType].length) {
+        settings.hooks[hookType] = filtered;
+        modified = true;
       }
 
-      // Remove empty hooks object
-      if (Object.keys(settings.hooks).length === 0) {
-        delete settings.hooks;
+      // Remove empty hook arrays
+      if (settings.hooks[hookType].length === 0) {
+        delete settings.hooks[hookType];
       }
+    }
 
-      if (modified) {
+    // Remove empty hooks object
+    if (Object.keys(settings.hooks).length === 0) {
+      delete settings.hooks;
+    }
+
+    if (modified) {
+      try {
         const settingsDir = dirname(settingsPath);
         const tmpSettings = join(settingsDir, `.settings.${process.pid}.${Date.now()}.tmp`);
         writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
         renameSync(tmpSettings, settingsPath);
         console.log(`  Removed hooks: ${settingsPath}`);
+      } catch (err) {
+        console.warn(`  Warning: Failed to write ${settingsPath}: ${err.message}`);
       }
-    } catch {
-      // Skip files we can't parse
     }
   }
 }
@@ -1445,6 +1394,57 @@ function extractAccountFlag(args) {
   return null;
 }
 
+/**
+ * Strip common flags from args array (mutates in-place) and return parsed values.
+ * Handles --no-remote-access, --remote-access, --dangerously-skip-permissions,
+ * and --account / -a flags shared by cmdRun and cmdResume.
+ */
+function parseCommonFlags(args) {
+  // Remote access is on by default; --no-remote-access disables it
+  const noRemoteIdx = args.indexOf('--no-remote-access');
+  let remoteAccess = noRemoteIdx === -1;
+  if (noRemoteIdx !== -1) {
+    args.splice(noRemoteIdx, 1);
+  }
+  // Also accept legacy --remote-access flag (no-op, already default)
+  const legacyIdx = args.indexOf('--remote-access');
+  if (legacyIdx !== -1) {
+    args.splice(legacyIdx, 1);
+  }
+
+  // Extract --dangerously-skip-permissions (consume it, re-add to claude args later)
+  const skipPermsIdx = args.indexOf('--dangerously-skip-permissions');
+  const skipPermissions = skipPermsIdx !== -1;
+  if (skipPermsIdx !== -1) {
+    args.splice(skipPermsIdx, 1);
+  }
+
+  // Extract --account / -a flag (consume it, don't pass to claude)
+  const requestedAccount = extractAccountFlag(args);
+
+  return { remoteAccess, skipPermissions, requestedAccount };
+}
+
+/**
+ * If remote access is enabled and we're not already inside tmux,
+ * create a tmux session and re-exec the current process inside it.
+ * Returns true if re-execed (caller should return), false otherwise.
+ */
+async function bootstrapTmux(remoteAccess) {
+  if (!remoteAccess) return false;
+
+  const { isInsideTmux, generateSessionName, reexecInTmux } = await import('../lib/tmux.js');
+
+  if (!isInsideTmux()) {
+    const sessionName = generateSessionName();
+    console.error(`[claude-nonstop] Creating tmux session "${sessionName}"...`);
+    reexecInTmux(sessionName, process.argv);
+    return true;
+  }
+
+  return false;
+}
+
 function printHelp() {
   console.log(`
 claude-nonstop — Multi-account switching + Slack remote access for Claude Code
@@ -1489,7 +1489,7 @@ Options for setup:
   --channel-id <id>  Slack channel ID for single-channel mode
   --allowed-users <ids>  Comma-separated Slack user IDs
   --invite-user-id <id>  Auto-invite user to session channels
-  --channel-prefix <p>   Prefix for channel names (default: cn)
+  --channel-prefix <p>   Prefix for channel names (default: none)
 
   When --bot-token and --app-token are provided (or --from-env), setup
   runs non-interactively using defaults for omitted optional fields.

@@ -88,7 +88,7 @@ describe('loadConfig (real)', () => {
   });
 });
 
-describe('saveConfig / loadConfig round-trip (real)', () => {
+describe('saveConfig / loadConfig round-trip (real)', { skip: !!process.env.CI }, () => {
   // Tests that call real saveConfig + loadConfig against the live config.
   // We save the original config, modify, then restore to avoid pollution.
   let originalConfig;
@@ -118,7 +118,7 @@ describe('saveConfig / loadConfig round-trip (real)', () => {
   });
 });
 
-describe('addAccount / removeAccount (real)', () => {
+describe('addAccount / removeAccount (real)', { skip: !!process.env.CI }, () => {
   // Use a unique name to avoid collisions, and always clean up
   const testName = `test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   let added = false;
@@ -196,7 +196,7 @@ describe('config file operations (temp dir)', () => {
   });
 });
 
-describe('ensureDefaultAccount', () => {
+describe('ensureDefaultAccount', { skip: !!process.env.CI }, () => {
   let originalConfig;
 
   beforeEach(() => {

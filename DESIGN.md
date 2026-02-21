@@ -208,14 +208,14 @@ Claude Code tool use
     → hook-notify.cjs "tool-use" (async, non-blocking)
       → extractToolDetail(tool_name, tool_input) → human-readable detail
       → append event to buffer file (~/.claude-nonstop/data/progress/progress-<session_id>.json)
-      → if 10s since last flush: format message, call updateProgressMessage(), clear buffer
+      → if 3s since last flush: format message, call updateProgressMessage(), clear buffer
 ```
 
-**Why PostToolUse hooks over PTY scraping:** Structured JSON input is reliable regardless of terminal output format changes. The hook provides `session_id` directly, avoiding CWD-based fallback lookups. The `async: true` flag ensures hooks don't block Claude's agentic loop. Trade-off: one short-lived process per tool call, but with buffered Slack updates (every 10s) the Slack API overhead is minimal.
+**Why PostToolUse hooks over PTY scraping:** Structured JSON input is reliable regardless of terminal output format changes. The hook provides `session_id` directly, avoiding CWD-based fallback lookups. The `async: true` flag ensures hooks don't block Claude's agentic loop. Trade-off: one short-lived process per tool call, but with buffered Slack updates (every 3s) the Slack API overhead is minimal.
 
 ### Updatable Progress Message
 
-A single Slack message is created on first tool activity and updated every 10s with accumulated events. The message is cleared when the Stop hook fires. `progressMessageTs` is stored in `channel-map.json` per session.
+A single Slack message is created on first tool activity and updated every 3s with accumulated events. The message is cleared when the Stop hook fires. `progressMessageTs` is stored in `channel-map.json` per session.
 
 ### Control Commands
 
@@ -247,7 +247,7 @@ If `tmux send-keys` fails (non-zero exit), the webhook posts a warning to the ch
 |-------|-----------|---------|
 | `session-start` | Claude Code SessionStart hook | Session created |
 | `completed` | Claude Code Stop hook | Claude completes a turn |
-| `tool-use` | Claude Code PostToolUse hook | Tool use completed (buffered, flushed every 10s) |
+| `tool-use` | Claude Code PostToolUse hook | Tool use completed (buffered, flushed every 3s) |
 | `waiting-for-input` | Claude Code PreToolUse hook | ExitPlanMode or AskUserQuestion (Claude is waiting for user input) |
 | `account-switch` | runner.js | Rate limit detected, switching to next account |
 
@@ -276,7 +276,12 @@ bin/claude-nonstop.js
   │     ├── lib/reauth.js ─── lib/keychain.js
   │     └── (spawns) remote/hook-notify.cjs (account-switch)
   ├── lib/reauth.js
-  └── lib/tmux.js
+  ├── lib/tmux.js
+  └── lib/launch.js
+        ├── lib/keychain.js
+        ├── lib/usage.js
+        ├── lib/scorer.js
+        └── lib/reauth.js
 
 scripts/postinstall.js              (self-contained, no lib/ imports)
 
@@ -284,6 +289,15 @@ remote/hook-notify.cjs
   ├── remote/load-env.cjs ─── remote/paths.cjs
   ├── remote/paths.cjs (PROGRESS_DIR)
   └── remote/channel-manager.cjs ─── remote/paths.cjs
+
+remote/rename-worker.cjs
+  ├── remote/load-env.cjs ─── remote/paths.cjs
+  ├── remote/channel-manager.cjs ─── remote/paths.cjs
+  └── remote/hook-notify.cjs (spawnSlug, generateSlugName)
+
+remote/countdown-worker.cjs
+  ├── remote/load-env.cjs ─── remote/paths.cjs
+  └── @slack/web-api
 
 remote/start-webhook.cjs
   ├── remote/load-env.cjs

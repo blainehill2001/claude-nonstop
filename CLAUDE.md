@@ -22,6 +22,7 @@ lib/                          Core logic (ESM, .js)
   tmux.js                     tmux session management
   platform.js                 OS detection
   reauth.js                   Re-authentication flow
+  launch.js                   Shared launch logic for cmdRun/cmdResume
 remote/                       Slack remote access subsystem (CJS, .cjs)
   hook-notify.cjs             Hook entry point (called by Claude Code hooks and runner.js)
   webhook.cjs                 Socket Mode handler (Slack -> tmux relay)
@@ -29,6 +30,8 @@ remote/                       Slack remote access subsystem (CJS, .cjs)
   channel-manager.cjs         Slack channel lifecycle (create, post, archive)
   paths.cjs                   Shared path constants for CJS modules
   load-env.cjs                .env loader for CJS modules
+  rename-worker.cjs           Detached channel rename worker
+  countdown-worker.cjs        Detached countdown updater for sleep notifications
 scripts/
   postinstall.js              Restart webhook service on npm install
 ```
