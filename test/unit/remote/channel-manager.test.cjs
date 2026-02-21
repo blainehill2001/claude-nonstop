@@ -523,6 +523,221 @@ describe('SlackChannelManager.postToSessionChannel', () => {
   });
 });
 
+describe('SlackChannelManager.postOutputMessage', () => {
+  let tempDir;
+  let manager;
+  let mockCalls;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    const mapDir = path.join(tempDir, 'data');
+    fs.mkdirSync(mapDir, { recursive: true });
+    const { client, calls } = createMockSlackClient();
+    mockCalls = calls;
+    manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: path.join(mapDir, 'channel-map.json'),
+    });
+    manager.client = client;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('creates new message when no outputMessageTs exists', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = await manager.postOutputMessage('sess-1', 'terminal output');
+    assert.equal(result, true);
+
+    const postCall = mockCalls.find(c => c.method === 'chat.postMessage');
+    assert.ok(postCall, 'Should call chat.postMessage');
+    assert.equal(postCall.args.channel, 'C001');
+    assert.equal(postCall.args.text, 'terminal output');
+
+    // Verify outputMessageTs is stored in map
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.ok(map['sess-1'].outputMessageTs, 'Should store outputMessageTs');
+    assert.equal(map['sess-1'].outputMessageLen, 'terminal output'.length);
+  });
+
+  it('updates existing message when outputMessageTs exists', async () => {
+    const data = {
+      'sess-1': {
+        channelId: 'C001', active: true,
+        outputMessageTs: '1111.0001',
+        outputMessageLen: 10,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = await manager.postOutputMessage('sess-1', 'updated output');
+    assert.equal(result, true);
+
+    const updateCall = mockCalls.find(c => c.method === 'chat.update');
+    assert.ok(updateCall, 'Should call chat.update');
+    assert.equal(updateCall.args.ts, '1111.0001');
+    assert.equal(updateCall.args.text, 'updated output');
+
+    // Verify outputMessageLen was updated
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.equal(map['sess-1'].outputMessageLen, 'updated output'.length);
+  });
+
+  it('returns false for unknown session', async () => {
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify({}));
+    const result = await manager.postOutputMessage('nonexistent', 'text');
+    assert.equal(result, false);
+  });
+
+  it('returns false for inactive session', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', active: false, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    const result = await manager.postOutputMessage('sess-1', 'text');
+    assert.equal(result, false);
+  });
+
+  it('starts new message when text exceeds 3900 chars', async () => {
+    const data = {
+      'sess-1': {
+        channelId: 'C001', active: true,
+        outputMessageTs: '1111.0001',
+        outputMessageLen: 3800,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    // Text that would push total over 3900
+    const longText = 'x'.repeat(200);
+    const result = await manager.postOutputMessage('sess-1', longText);
+    assert.equal(result, true);
+
+    // Should have called postMessage (new message) not update
+    const postCall = mockCalls.find(c => c.method === 'chat.postMessage');
+    assert.ok(postCall, 'Should create a new message via chat.postMessage');
+    assert.equal(postCall.args.text, longText);
+
+    // outputMessageTs should have been cleared and re-set
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.ok(map['sess-1'].outputMessageTs, 'Should have new outputMessageTs');
+    assert.notEqual(map['sess-1'].outputMessageTs, '1111.0001', 'Should be a new ts, not the old one');
+    assert.equal(map['sess-1'].outputMessageLen, longText.length);
+  });
+
+  it('retries on message_not_found error', async () => {
+    const data = {
+      'sess-1': {
+        channelId: 'C001', active: true,
+        outputMessageTs: '1111.0001',
+        outputMessageLen: 50,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    // Make chat.update throw message_not_found once
+    let updateCallCount = 0;
+    manager.client.chat.update = async () => {
+      updateCallCount++;
+      const err = new Error('message_not_found');
+      err.data = { error: 'message_not_found' };
+      throw err;
+    };
+
+    const result = await manager.postOutputMessage('sess-1', 'retry text');
+    assert.equal(result, true);
+
+    // Should have fallen back to postMessage after finalizing
+    const postCall = mockCalls.find(c => c.method === 'chat.postMessage');
+    assert.ok(postCall, 'Should fall back to chat.postMessage');
+    assert.equal(postCall.args.text, 'retry text');
+  });
+
+  it('returns false on non-retryable API error', async () => {
+    const data = {
+      'sess-1': { channelId: 'C001', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    manager.client.chat.postMessage = async () => {
+      throw new Error('some_other_error');
+    };
+
+    const result = await manager.postOutputMessage('sess-1', 'text');
+    assert.equal(result, false);
+  });
+});
+
+describe('SlackChannelManager.finalizeOutputMessage', () => {
+  let tempDir;
+  let manager;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    const mapDir = path.join(tempDir, 'data');
+    fs.mkdirSync(mapDir, { recursive: true });
+    const { client } = createMockSlackClient();
+    manager = new SlackChannelManager({
+      botToken: 'xoxb-test',
+      channelMapPath: path.join(mapDir, 'channel-map.json'),
+    });
+    manager.client = client;
+  });
+
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
+
+  it('clears outputMessageTs and outputMessageLen from channel map', () => {
+    const data = {
+      'sess-1': {
+        channelId: 'C001', active: true,
+        outputMessageTs: '1111.0001',
+        outputMessageLen: 500,
+        createdAt: new Date().toISOString(),
+      },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    manager.finalizeOutputMessage('sess-1');
+
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.equal(map['sess-1'].outputMessageTs, undefined);
+    assert.equal(map['sess-1'].outputMessageLen, undefined);
+    // Other fields preserved
+    assert.equal(map['sess-1'].channelId, 'C001');
+    assert.equal(map['sess-1'].active, true);
+  });
+
+  it('does nothing for unknown session', () => {
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify({}));
+    // Should not throw
+    manager.finalizeOutputMessage('unknown');
+  });
+
+  it('handles entry with no output fields gracefully', () => {
+    const data = {
+      'sess-1': { channelId: 'C001', active: true, createdAt: new Date().toISOString() },
+    };
+    fs.writeFileSync(manager.channelMapPath, JSON.stringify(data));
+
+    // Should not throw even if fields don't exist
+    manager.finalizeOutputMessage('sess-1');
+
+    const map = JSON.parse(fs.readFileSync(manager.channelMapPath, 'utf8'));
+    assert.equal(map['sess-1'].channelId, 'C001');
+  });
+});
+
 describe('SlackChannelManager.archiveChannel', () => {
   let tempDir;
   let manager;

@@ -396,6 +396,75 @@ class SlackChannelManager {
         }
     }
 
+    /**
+     * Post or update a terminal output message in a session's channel.
+     * Creates a new message if none exists or if accumulated length exceeds limit.
+     * Returns true on success.
+     */
+    async postOutputMessage(sessionId, text) {
+        const MAX_OUTPUT_LEN = 3900;
+        const map = this._readChannelMap();
+        const entry = map[sessionId];
+        if (!entry || !entry.active) return false;
+
+        const currentLen = entry.outputMessageLen || 0;
+
+        // If appending would exceed Slack's limit, finalize current and start new
+        if (entry.outputMessageTs && currentLen + text.length > MAX_OUTPUT_LEN) {
+            this.finalizeOutputMessage(sessionId);
+            return this.postOutputMessage(sessionId, text);
+        }
+
+        try {
+            if (entry.outputMessageTs) {
+                // Update existing message
+                await this.client.chat.update({
+                    channel: entry.channelId,
+                    ts: entry.outputMessageTs,
+                    text,
+                });
+                const freshMap = this._readChannelMap();
+                if (freshMap[sessionId]) {
+                    freshMap[sessionId].outputMessageLen = text.length;
+                    this._writeChannelMap(freshMap);
+                }
+            } else {
+                // Create new output message
+                const result = await this.client.chat.postMessage({
+                    channel: entry.channelId,
+                    text,
+                });
+                const freshMap = this._readChannelMap();
+                if (freshMap[sessionId]) {
+                    freshMap[sessionId].outputMessageTs = result.ts;
+                    freshMap[sessionId].outputMessageLen = text.length;
+                    this._writeChannelMap(freshMap);
+                }
+            }
+            return true;
+        } catch (error) {
+            if (error.data?.error === 'message_not_found') {
+                this.finalizeOutputMessage(sessionId);
+                return this.postOutputMessage(sessionId, text);
+            }
+            console.warn('Failed to post output message:', error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Finalize the current output message (stop updating it).
+     * Next output will create a new Slack message.
+     */
+    finalizeOutputMessage(sessionId) {
+        const map = this._readChannelMap();
+        const entry = map[sessionId];
+        if (!entry) return;
+        delete entry.outputMessageTs;
+        delete entry.outputMessageLen;
+        this._writeChannelMap(map);
+    }
+
     async setTypingIndicator(channelId, messageTs) {
         // Clear previous typing indicator before setting new one
         const map = this._readChannelMap();
