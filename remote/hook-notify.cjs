@@ -12,6 +12,7 @@
  *   waiting-for-input  — Notify when Claude is waiting for user input (Claude Code PreToolUse hook)
  *   account-switch     — Notify about rate limit account switch (runner.js)
  *   sleep-until-reset  — Notify that all accounts are near-exhausted, sleeping until reset (runner.js)
+ *   output             — Forward buffered terminal output to Slack (runner.js timer + hook flush)
  *   sleep-wake         — Notify that sleep is complete and resuming (runner.js)
  *
  * Environment:
@@ -353,6 +354,15 @@ function formatWaitingMessage(toolName, toolInput, transcriptContent) {
     return ':hourglass: Waiting for input \u2014 reply here or use `!status` to view.';
 }
 
+/**
+ * Format terminal output text for Slack.
+ * Returns null if text is empty/whitespace.
+ */
+function formatOutputMessage(text) {
+    if (!text || !text.trim()) return null;
+    return text.trim();
+}
+
 // ─── User Response Formatter ─────────────────────────────────────────────────
 
 /**
@@ -651,6 +661,19 @@ async function main() {
         return;
     }
 
+    // Handle output notifications (buffered PTY output from runner.js)
+    if (notificationType === 'output') {
+        if (!isPerSessionMode() || !sessionId) return;
+
+        const text = hookContext?.text;
+        const formatted = formatOutputMessage(text);
+        if (!formatted) return;
+
+        const manager = createChannelManager();
+        await manager.postOutputMessage(sessionId, formatted);
+        return;
+    }
+
     // Handle tool-use events from PostToolUse hook (buffered, flush every 3s)
     if (notificationType === 'tool-use') {
         if (!isPerSessionMode() || !sessionId) return;
@@ -852,6 +875,8 @@ module.exports = {
     FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS, USER_RESPONSE_TOOLS,
     // User response formatting
     formatUserResponse,
+    // Output message formatting
+    formatOutputMessage,
     // Slug generation helpers
     generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
     // Countdown worker

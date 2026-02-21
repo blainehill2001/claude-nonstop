@@ -1304,3 +1304,32 @@ describe('buildApprovalButtons', () => {
   });
 });
 
+describe('formatOutputMessage', () => {
+    it('formats output text by trimming', () => {
+        const { formatOutputMessage } = require('../../../remote/hook-notify.cjs');
+        const result = formatOutputMessage('  Hello world  ');
+        assert.equal(result, 'Hello world');
+    });
+
+    it('returns null for empty text', () => {
+        const { formatOutputMessage } = require('../../../remote/hook-notify.cjs');
+        assert.equal(formatOutputMessage(''), null);
+    });
+
+    it('returns null for null', () => {
+        const { formatOutputMessage } = require('../../../remote/hook-notify.cjs');
+        assert.equal(formatOutputMessage(null), null);
+    });
+
+    it('returns null for whitespace-only text', () => {
+        const { formatOutputMessage } = require('../../../remote/hook-notify.cjs');
+        assert.equal(formatOutputMessage('   \n\n  '), null);
+    });
+
+    it('preserves newlines in content', () => {
+        const { formatOutputMessage } = require('../../../remote/hook-notify.cjs');
+        const result = formatOutputMessage('line 1\nline 2\nline 3');
+        assert.equal(result, 'line 1\nline 2\nline 3');
+    });
+});
+
