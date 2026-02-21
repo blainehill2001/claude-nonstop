@@ -624,6 +624,13 @@ async function cmdRun(claudeArgs) {
     claudeArgs.splice(legacyIdx, 1);
   }
 
+  // Extract --dangerously-skip-permissions (consume it, re-add to claude args later)
+  const skipPermsIdx = claudeArgs.indexOf('--dangerously-skip-permissions');
+  const skipPermissions = skipPermsIdx !== -1;
+  if (skipPermsIdx !== -1) {
+    claudeArgs.splice(skipPermsIdx, 1);
+  }
+
   // Extract --account / -a flag (consume it, don't pass to claude)
   const requestedAccount = extractAccountFlag(claudeArgs);
 
@@ -645,6 +652,11 @@ async function cmdRun(claudeArgs) {
         'Your responses are relayed to a Slack channel. Structure output for readability: use short paragraphs, bullet points, and bold headers (## Header). Separate sections with blank lines. Keep summaries concise — prefer a few clear bullets over long prose.'
       );
     }
+  }
+
+  // Add --dangerously-skip-permissions to claude args if requested
+  if (skipPermissions && !claudeArgs.includes('--dangerously-skip-permissions')) {
+    claudeArgs.push('--dangerously-skip-permissions');
   }
 
   const accounts = getAccounts();
@@ -675,6 +687,13 @@ async function cmdResume(resumeArgs) {
   const legacyIdx = resumeArgs.indexOf('--remote-access');
   if (legacyIdx !== -1) {
     resumeArgs.splice(legacyIdx, 1);
+  }
+
+  // Extract --dangerously-skip-permissions
+  const skipPermsIdx = resumeArgs.indexOf('--dangerously-skip-permissions');
+  const skipPermissions = skipPermsIdx !== -1;
+  if (skipPermsIdx !== -1) {
+    resumeArgs.splice(skipPermsIdx, 1);
   }
 
   // Extract --account / -a flag (consume it, don't pass to claude)
@@ -725,6 +744,9 @@ async function cmdResume(resumeArgs) {
 
   // Build claude args — approval prompts preserved for Slack interaction
   const claudeArgs = ['--resume', sessionId];
+  if (skipPermissions) {
+    claudeArgs.push('--dangerously-skip-permissions');
+  }
 
   const { getAuthenticatedAccounts, selectAccount } = await import('../lib/launch.js');
   const authenticated = await getAuthenticatedAccounts(accounts, { remoteAccess });
@@ -1456,6 +1478,8 @@ Commands:
 Options:
   --account <name>, -a <name>
                      Use a specific account (skip auto-selection)
+  --dangerously-skip-permissions
+                     Run Claude without permission prompts (unattended mode)
   --no-remote-access Skip tmux session + Slack channels (local terminal only)
 
 Options for setup:
