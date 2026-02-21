@@ -23,7 +23,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { execFileSync, execFile } = require('child_process');
+const { execFileSync, execFile, spawn: spawnChild } = require('child_process');
 
 require('./load-env.cjs');
 
@@ -385,6 +385,11 @@ function spawnSlug(promptText) {
         const instruction = `Generate a 2-4 word hyphenated slug summarizing this task. Output ONLY the slug, nothing else. Examples: "fix-auth-bug", "add-dark-mode", "refactor-api-client". Task: ${truncated}`;
 
         const env = { ...process.env, CN_SLUG_GENERATION: '1' };
+        // Strip Claude Code internal env vars so the subprocess runs independently
+        // (CLAUDECODE blocks nested sessions, CLAUDE_CODE_SSE_PORT causes hangs)
+        delete env.CLAUDECODE;
+        delete env.CLAUDE_CODE_SSE_PORT;
+        delete env.CLAUDE_CODE_ENTRYPOINT;
         // Prevent the spawned claude from triggering hooks or creating channels
         delete env.CLAUDE_REMOTE_ACCESS;
         // Remove credentials the subprocess doesn't need
@@ -392,9 +397,9 @@ function spawnSlug(promptText) {
         delete env.SLACK_APP_TOKEN;
         delete env.SLACK_INVITE_USER_ID;
 
-        execFile('claude', ['-p', instruction, '--model', 'haiku', '--output-format', 'text'], {
+        const child = execFile('claude', ['-p', instruction, '--model', 'haiku', '--output-format', 'text'], {
             env,
-            timeout: 15000,
+            timeout: 30000,
             maxBuffer: 1024,
         }, (error, stdout) => {
             if (error) {
@@ -405,7 +410,39 @@ function spawnSlug(promptText) {
             const raw = (stdout || '').trim();
             resolve(raw || null);
         });
+        // Close stdin so claude -p doesn't wait for input
+        child.stdin.end();
     });
+}
+
+// ─── Detached Rename Worker ──────────────────────────────────────────────────
+
+const RENAME_WORKER_PATH = path.join(__dirname, 'rename-worker.cjs');
+
+/**
+ * Spawn rename-worker.cjs as a detached process that outlives the hook.
+ * The worker generates a slug via Haiku and renames the Slack channel.
+ * Fire-and-forget: the hook process exits immediately.
+ */
+function spawnRenameWorker(sessionId, userPrompt, channelPrefix) {
+    try {
+        // Pass a clean env: the worker calls spawnSlug which strips Claude vars,
+        // but strip them here too so the worker itself doesn't interfere
+        const env = { ...process.env };
+        delete env.CLAUDECODE;
+        delete env.CLAUDE_CODE_SSE_PORT;
+        delete env.CLAUDE_CODE_ENTRYPOINT;
+        delete env.CLAUDE_REMOTE_ACCESS;
+
+        const child = spawnChild('node', [RENAME_WORKER_PATH, sessionId, userPrompt, channelPrefix || 'cn'], {
+            detached: true,
+            stdio: 'ignore',
+            env,
+        });
+        child.unref();
+    } catch (err) {
+        console.warn('Failed to spawn rename worker:', err.message);
+    }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -459,25 +496,10 @@ async function main() {
         const text = `:bust_in_silhouette: *You:*\n>>> ${displayText}`;
         await manager.postToSessionChannel(sessionId, text);
 
-        // Auto-rename channel on first user prompt
+        // Auto-rename channel on first user prompt (detached background process)
         const mapping = manager.getChannelMapping(sessionId);
         if (mapping && !mapping.renamed) {
-            try {
-                const raw = await spawnSlug(userPrompt);
-                const slug = generateSlugName(raw);
-                if (slug) {
-                    const prefix = manager.channelPrefix;
-                    const safeProject = mapping.project
-                        ? generateSlugName(mapping.project) + '-'
-                        : '';
-                    const newName = `${prefix}-${safeProject}${slug}`
-                        .substring(0, 80)
-                        .replace(/-$/, '');
-                    await manager.renameChannel(sessionId, newName);
-                }
-            } catch (err) {
-                console.warn('Channel rename failed:', err.message);
-            }
+            spawnRenameWorker(sessionId, userPrompt, manager.channelPrefix);
         }
 
         return;
@@ -674,5 +696,5 @@ module.exports = {
     // User response formatting
     formatUserResponse,
     // Slug generation helpers
-    generateSlugName, isSlugGeneration, spawnSlug,
+    generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
 };

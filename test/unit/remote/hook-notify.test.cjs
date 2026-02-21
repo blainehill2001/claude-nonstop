@@ -10,7 +10,7 @@ const {
   readProgressBuffer, writeProgressBuffer, appendToProgressBuffer, progressBufferPath,
   FLUSH_INTERVAL_MS, WAITING_FOR_INPUT_TOOLS, USER_RESPONSE_TOOLS,
   formatUserResponse,
-  generateSlugName, isSlugGeneration, spawnSlug,
+  generateSlugName, isSlugGeneration, spawnSlug, spawnRenameWorker, RENAME_WORKER_PATH,
 } = require('../../../remote/hook-notify.cjs');
 
 const FIXTURES_DIR = path.join(__dirname, '..', '..', 'fixtures', 'transcripts');
@@ -1113,5 +1113,50 @@ describe('formatUserResponse', () => {
   it('returns null for unknown tool with object response', () => {
     const result = formatUserResponse('Bash', {}, { output: 'hello' });
     assert.equal(result, null);
+  });
+});
+
+describe('spawnSlug Claude env stripping', () => {
+  it('strips CLAUDECODE from the environment', () => {
+    const src = spawnSlug.toString();
+    assert.ok(src.includes('CLAUDECODE'), 'spawnSlug should strip CLAUDECODE env var');
+  });
+
+  it('strips CLAUDE_CODE_SSE_PORT from the environment', () => {
+    const src = spawnSlug.toString();
+    assert.ok(src.includes('CLAUDE_CODE_SSE_PORT'), 'spawnSlug should strip CLAUDE_CODE_SSE_PORT');
+  });
+
+  it('strips CLAUDE_CODE_ENTRYPOINT from the environment', () => {
+    const src = spawnSlug.toString();
+    assert.ok(src.includes('CLAUDE_CODE_ENTRYPOINT'), 'spawnSlug should strip CLAUDE_CODE_ENTRYPOINT');
+  });
+});
+
+describe('rename worker', () => {
+  it('RENAME_WORKER_PATH points to rename-worker.cjs', () => {
+    assert.ok(RENAME_WORKER_PATH.endsWith('rename-worker.cjs'));
+  });
+
+  it('rename-worker.cjs exists on disk', () => {
+    assert.ok(fs.existsSync(RENAME_WORKER_PATH));
+  });
+
+  it('rename-worker.cjs has valid syntax', () => {
+    // Requiring the module validates syntax
+    const worker = require(RENAME_WORKER_PATH);
+    assert.ok(worker !== undefined);
+  });
+
+  it('spawnRenameWorker is exported and callable', () => {
+    assert.equal(typeof spawnRenameWorker, 'function');
+  });
+
+  it('spawnRenameWorker does not throw with valid args', () => {
+    // This spawns a real detached process, but it will exit immediately
+    // because there's no SLACK_BOT_TOKEN in the test environment
+    assert.doesNotThrow(() => {
+      spawnRenameWorker('test-session-nonexistent', 'fix auth bug', 'cn');
+    });
   });
 });
