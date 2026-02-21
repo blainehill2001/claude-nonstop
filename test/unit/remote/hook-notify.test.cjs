@@ -562,7 +562,54 @@ describe('formatWaitingMessage', () => {
     const msg = formatWaitingMessage('AskUserQuestion', input);
     assert.ok(msg.includes(':question:'));
     assert.ok(msg.includes('Which database should we use?'));
-    assert.ok(msg.includes('Reply here'));
+    assert.ok(msg.includes('type your answer'));
+  });
+
+  it('includes option descriptions for AskUserQuestion', () => {
+    const input = {
+      questions: [{
+        question: 'Which database should we use?',
+        options: [
+          { label: 'PostgreSQL', description: 'Battle-tested relational DB' },
+          { label: 'MongoDB', description: 'Document store, flexible schema' },
+        ],
+      }],
+    };
+    const msg = formatWaitingMessage('AskUserQuestion', input);
+    assert.ok(msg.includes('PostgreSQL'));
+    assert.ok(msg.includes('Battle-tested relational DB'));
+    assert.ok(msg.includes('MongoDB'));
+    assert.ok(msg.includes('Document store, flexible schema'));
+  });
+
+  it('formats option descriptions as numbered list', () => {
+    const input = {
+      questions: [{
+        question: 'Pick one',
+        options: [
+          { label: 'A', description: 'First choice' },
+          { label: 'B', description: 'Second choice' },
+        ],
+      }],
+    };
+    const msg = formatWaitingMessage('AskUserQuestion', input);
+    assert.ok(msg.includes('1.'));
+    assert.ok(msg.includes('2.'));
+  });
+
+  it('handles options without descriptions gracefully', () => {
+    const input = {
+      questions: [{
+        question: 'Pick one',
+        options: [
+          { label: 'A' },
+          { label: 'B', description: '' },
+        ],
+      }],
+    };
+    const msg = formatWaitingMessage('AskUserQuestion', input);
+    assert.ok(msg.includes('A'));
+    assert.ok(msg.includes('B'));
   });
 
   it('truncates long question text to 200 chars', () => {

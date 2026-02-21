@@ -350,7 +350,21 @@ function formatWaitingMessage(toolName, toolInput, transcriptContent) {
         if (questions && questions.length > 0 && questions[0].question) {
             const q = questions[0].question;
             const truncated = q.length > 200 ? q.substring(0, 200) + '...' : q;
-            return `:question: Claude is asking: "${truncated}"\n\n:arrow_right: Reply here with your answer.`;
+            let msg = `:question: Claude is asking: "${truncated}"\n`;
+
+            // Include option descriptions if available
+            const options = questions[0].options;
+            if (options && options.length > 0) {
+                msg += '\n';
+                options.slice(0, 4).forEach((opt, i) => {
+                    const label = opt.label || `Option ${i + 1}`;
+                    const desc = opt.description ? ` \u2014 ${opt.description}` : '';
+                    msg += `${i + 1}. *${label}*${desc}\n`;
+                });
+            }
+
+            msg += '\n:arrow_right: Click a button or type your answer.';
+            return msg;
         }
         return ':question: Claude is asking a question \u2014 reply here with your answer, or use `!status` to view.';
     }
