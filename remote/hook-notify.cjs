@@ -621,15 +621,51 @@ async function main() {
 
         const text = formatWaitingMessage(toolName, toolInput, transcriptContent);
         const approvalBlocks = buildApprovalButtons(toolName, toolInput);
-        if (approvalBlocks) {
-            const blocks = [
-                { type: 'section', text: { type: 'mrkdwn', text: text.substring(0, 3000) } },
-                ...approvalBlocks,
-            ];
-            await manager.postToSessionChannel(sessionId, text, blocks);
-        } else {
-            await manager.postToSessionChannel(sessionId, text);
+
+        // Phase 1: Post immediately WITHOUT @mention (keeps Slack in sync)
+        const mapping = manager.getChannelMapping(sessionId);
+        if (!mapping) return;
+
+        let messageTs = null;
+        try {
+            const postOpts = { channel: mapping.channelId, text };
+            if (approvalBlocks) {
+                postOpts.text = text.substring(0, 3000);
+                postOpts.blocks = [
+                    { type: 'section', text: { type: 'mrkdwn', text: text.substring(0, 3000) } },
+                    ...approvalBlocks,
+                ];
+            }
+            const result = await manager.client.chat.postMessage(postOpts);
+            messageTs = result.ts;
+        } catch (err) {
+            console.warn('Failed to post waiting-for-input message:', err.message);
+            return;
         }
+
+        // Phase 2: After 15 seconds, update message with @mention to trigger push notification
+        const inviteUserId = process.env.SLACK_INVITE_USER_ID;
+        if (messageTs && inviteUserId) {
+            await new Promise(resolve => setTimeout(resolve, 15_000));
+            try {
+                const mentionPrefix = `<@${inviteUserId}> `;
+                const updateOpts = {
+                    channel: mapping.channelId,
+                    ts: messageTs,
+                    text: mentionPrefix + text.substring(0, 3000),
+                };
+                if (approvalBlocks) {
+                    updateOpts.blocks = [
+                        { type: 'section', text: { type: 'mrkdwn', text: mentionPrefix + text.substring(0, 2900) } },
+                        ...approvalBlocks,
+                    ];
+                }
+                await manager.client.chat.update(updateOpts);
+            } catch (err) {
+                console.warn('Failed to update message with @mention:', err.message);
+            }
+        }
+
         return;
     }
 

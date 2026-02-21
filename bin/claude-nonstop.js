@@ -1153,9 +1153,9 @@ function installHooksToAllProfiles() {
       if (hookType === 'PostToolUse') {
         hookEntry.timeout = 15;
       }
-      // PreToolUse for waiting-for-input needs a timeout for Slack API calls
+      // PreToolUse for waiting-for-input: 30s to allow 15s delay + Slack API calls
       if (hookType === 'PreToolUse') {
-        hookEntry.timeout = 15;
+        hookEntry.timeout = 30;
       }
       // UserPromptSubmit posts user's terminal input to Slack
       if (hookType === 'UserPromptSubmit') {
